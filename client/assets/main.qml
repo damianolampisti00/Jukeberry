@@ -196,15 +196,24 @@ TabbedPane {
                     }
                     Slider {
                         id: progress
+                        // While a finger is on it the player doesn't move it,
+                        // and lifting the finger seeks. (Seeking on
+                        // valueChanged would also fire on the player's own
+                        // updates, e.g. when a new track's duration clamps it.)
+                        property bool touching: false
                         fromValue: 0
                         toValue: player.duration > 0 ? player.duration : 1
                         enabled: player.hasTrack
                         horizontalAlignment: HorizontalAlignment.Fill
-                        // Moved by the user: seek. (Updates from the player
-                        // land within a second of the real position, so they
-                        // never look like a seek.)
-                        onValueChanged: {
-                            if (Math.abs(value - player.position) > 2500) player.seekTo(value)
+                        onTouch: {
+                            if (event.isDown()) {
+                                touching = true
+                            } else if (event.isUp()) {
+                                touching = false
+                                player.seekTo(immediateValue)
+                            } else if (event.isCancel()) {
+                                touching = false
+                            }
                         }
                     }
                     Container {
@@ -262,7 +271,7 @@ TabbedPane {
             }
             onCreationCompleted: {
                 player.positionChanged.connect(function () {
-                    progress.value = player.position
+                    if (!progress.touching) progress.value = player.position
                 })
             }
         }
