@@ -119,7 +119,11 @@ func (h *audioHub) pump(r io.Reader, enc *opusEncoder, rs *resampler) error {
 			discontinuity = true
 		}
 		if h.flush.Swap(false) {
+			// A seek or skip: the phone drops its queue, so refill it at once.
 			discontinuity = true
+			if burst := now.Add(-prebuffer); next.After(burst) {
+				next = burst
+			}
 		}
 		for i := range in {
 			in[i] = int16(binary.LittleEndian.Uint16(raw[i*2:]))

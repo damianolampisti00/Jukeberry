@@ -1,0 +1,193 @@
+#ifndef PLAYER_HPP_
+#define PLAYER_HPP_
+
+#include <QElapsedTimer>
+#include <QHash>
+#include <QObject>
+#include <QStringList>
+#include <QThread>
+#include <QTimer>
+#include <QUrl>
+#include <QVariant>
+
+#include <bb/cascades/ArrayDataModel>
+
+#include "audioring.hpp"
+
+class AudioOutput;
+class Link;
+
+namespace bb { namespace multimedia { class NowPlayingConnection; } }
+
+// The app's state and actions, for QML (context property "player").
+// State comes from the gateway: the status at connect, then go-librespot's
+// events (metadata, playing, paused, seek...). Actions are JSON commands
+// answered by id (see server/gateway.go).
+class Player : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
+    Q_PROPERTY(QString message READ message NOTIFY messageChanged)
+    Q_PROPERTY(QString serverUrl READ serverUrl NOTIFY settingsChanged)
+    Q_PROPERTY(QString token READ token NOTIFY settingsChanged)
+    Q_PROPERTY(bool configured READ configured NOTIFY settingsChanged)
+
+    Q_PROPERTY(bool hasTrack READ hasTrack NOTIFY trackChanged)
+    Q_PROPERTY(QString title READ title NOTIFY trackChanged)
+    Q_PROPERTY(QString artists READ artists NOTIFY trackChanged)
+    Q_PROPERTY(QString album READ album NOTIFY trackChanged)
+    Q_PROPERTY(QString contextName READ contextName NOTIFY trackChanged)
+    Q_PROPERTY(QString cover READ cover NOTIFY coverChanged)
+    Q_PROPERTY(int duration READ duration NOTIFY trackChanged)
+    Q_PROPERTY(int position READ position NOTIFY positionChanged)
+    Q_PROPERTY(bool playing READ playing NOTIFY playStateChanged)
+    Q_PROPERTY(bool liked READ liked NOTIFY likedChanged)
+    Q_PROPERTY(bool shuffle READ shuffle NOTIFY modesChanged)
+    Q_PROPERTY(int repeat READ repeat NOTIFY modesChanged) // 0 off, 1 context, 2 track
+
+    Q_PROPERTY(bb::cascades::DataModel *playlists READ playlists CONSTANT)
+    Q_PROPERTY(bb::cascades::DataModel *tracks READ tracks CONSTANT)
+    Q_PROPERTY(bb::cascades::DataModel *results READ results CONSTANT)
+    Q_PROPERTY(QString tracksTitle READ tracksTitle NOTIFY tracksChanged)
+    Q_PROPERTY(QString tracksUri READ tracksUri NOTIFY tracksChanged)
+    Q_PROPERTY(bool tracksLoading READ tracksLoading NOTIFY tracksChanged)
+    Q_PROPERTY(bool playlistsLoading READ playlistsLoading NOTIFY playlistsChanged)
+    Q_PROPERTY(bool searching READ searching NOTIFY resultsChanged)
+
+public:
+    explicit Player(QObject *parent = 0);
+    ~Player();
+
+    bool connected() const { return m_connected; }
+    QString message() const { return m_message; }
+    QString serverUrl() const { return m_serverUrl; }
+    QString token() const { return m_token; }
+    bool configured() const { return !m_serverUrl.isEmpty() && !m_token.isEmpty(); }
+
+    bool hasTrack() const { return !m_trackUri.isEmpty(); }
+    QString title() const { return m_title; }
+    QString artists() const { return m_artists; }
+    QString album() const { return m_album; }
+    QString contextName() const { return m_contextName; }
+    QString cover() const { return m_cover; }
+    int duration() const { return m_duration; }
+    int position() const;
+    bool playing() const { return m_playing; }
+    bool liked() const { return m_liked; }
+    bool shuffle() const { return m_shuffle; }
+    int repeat() const { return m_repeat; }
+
+    bb::cascades::DataModel *playlists() const { return m_playlists; }
+    bb::cascades::DataModel *tracks() const { return m_tracks; }
+    bb::cascades::DataModel *results() const { return m_results; }
+    QString tracksTitle() const { return m_tracksTitle; }
+    QString tracksUri() const { return m_tracksUri; }
+    bool tracksLoading() const { return m_tracksLoading; }
+    bool playlistsLoading() const { return m_playlistsLoading; }
+    bool searching() const { return m_searching; }
+
+    Q_INVOKABLE void saveSettings(const QString &serverUrl, const QString &token);
+    Q_INVOKABLE void playPause();
+    Q_INVOKABLE void seekTo(int ms);
+    Q_INVOKABLE void toggleShuffle();
+    Q_INVOKABLE void cycleRepeat();
+    Q_INVOKABLE void toggleLike();
+    // Plays `uri` (a track, or a playlist/album/artist), starting at `skipTo` if given.
+    Q_INVOKABLE void play(const QString &uri, const QString &skipTo = QString());
+    Q_INVOKABLE void loadPlaylists();
+    Q_INVOKABLE void openContext(const QString &uri, const QString &title);
+    Q_INVOKABLE void search(const QString &query);
+    Q_INVOKABLE QString formatTime(int ms) const;
+
+public slots:
+    // Slots, not just invokables: the lock screen's next/previous connect to them.
+    void next();
+    void previous();
+
+signals:
+    void connectedChanged();
+    void messageChanged();
+    void settingsChanged();
+    void trackChanged();
+    void coverChanged();
+    void positionChanged();
+    void playStateChanged();
+    void likedChanged();
+    void modesChanged();
+    void playlistsChanged();
+    void tracksChanged();
+    void resultsChanged();
+
+    // To the link thread.
+    void linkConnect(const QUrl &url, const QByteArray &token);
+    void linkSend(const QByteArray &utf8);
+
+private slots:
+    void onOpened();
+    void onClosed(const QString &reason, bool authFailed, bool lockedOut);
+    void onText(const QByteArray &utf8);
+    void onImage(quint32 requestId, const QByteArray &image);
+    void onTick();
+    void pollContext();
+    // Lock screen / headset controls.
+    void onNpPlay();
+    void onNpPause();
+    void onNpRevoked();
+
+private:
+    enum Purpose { None, Status, Playlists, Context, Search, Liked, Art };
+    struct Pending {
+        Pending() : purpose(None) {}
+        Purpose purpose;
+        QString key;
+    };
+
+    qint64 send(const QString &cmd, const QVariantMap &args = QVariantMap(), Purpose purpose = None,
+                const QString &key = QString());
+    void connectNow();
+    void setMessage(const QString &m);
+    void applyStatus(const QVariantMap &status);
+    void applyTrack(const QVariantMap &track);
+    void onEvent(const QString &type, const QVariantMap &data);
+    void setPlaying(bool playing);
+    void setPositionBase(qint64 ms);
+    void fillContext(const QVariantMap &data);
+    void fillResults(const QVariantMap &data);
+    // Cover art: a local file per URL; "" until it is fetched.
+    QString artFile(const QString &url) const;
+    void requestArt(const QString &url);
+    void applyArt(const QString &url, const QString &file);
+    void updateNowPlaying();
+
+    QString m_serverUrl, m_token;
+    bool m_connected;
+    QString m_message;
+
+    AudioRing m_ring;
+    QThread m_linkThread;
+    Link *m_link;
+    AudioOutput *m_audio;
+
+    qint64 m_nextId;
+    QHash<qint64, Pending> m_pending;
+    QHash<QString, bool> m_artInFlight;
+    QString m_artDir;
+
+    QString m_trackUri, m_title, m_artists, m_album, m_contextName, m_coverUrl, m_cover;
+    int m_duration;
+    qint64 m_posBase;
+    QElapsedTimer m_posClock;
+    bool m_playing, m_liked, m_shuffle;
+    int m_repeat;
+    QTimer m_tick;
+
+    bb::cascades::ArrayDataModel *m_playlists, *m_tracks, *m_results;
+    QString m_tracksTitle, m_tracksUri;
+    bool m_tracksLoading, m_playlistsLoading, m_searching;
+    int m_contextPolls;
+    QTimer m_contextTimer;
+
+    bb::multimedia::NowPlayingConnection *m_np;
+};
+
+#endif /* PLAYER_HPP_ */

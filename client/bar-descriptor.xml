@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<qnx xmlns="http://www.qnx.com/schemas/application/1.0">
+    <id>it.jukeberry.app</id>
+    <configuration name="Device-Release">
+       <entryPointType>Qnx/Cascades</entryPointType>
+       <platformArchitecture>armle-v7</platformArchitecture>
+       <asset path="arm/o.le-v7/Jukeberry.so" entry="true" type="Qnx/Elf">Jukeberry.so</asset>
+    </configuration>
+    <name>Jukeberry</name>
+    <versionNumber>0.1.0</versionNumber>
+    <buildId>2</buildId>
+    <description>Spotify Connect player for BlackBerry 10, through your own Jukeberry server. Not affiliated with Spotify.</description>
+    <author>Jukeberry</author>
+    <initialWindow>
+        <autoOrients>false</autoOrients>
+        <systemChrome>none</systemChrome>
+    </initialWindow>
+    <icon>
+        <image>icon.png</image>
+    </icon>
+    <asset path="icon.png">icon.png</asset>
+    <asset path="assets">assets</asset>
+    <permission system="true">run_native</permission>
+    <permission>access_internet</permission>
+    <permission system="true">play_audio</permission>
+    <!-- keeps playing while minimized or with the screen locked -->
+    <permission>run_when_backgrounded</permission>
+    <env var="CASCADES_THEME" value="dark"/>
+    <env var="LD_LIBRARY_PATH" value="app/native/lib:/usr/lib/qt4/lib"/>
+</qnx>

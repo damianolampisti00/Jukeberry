@@ -6,3 +6,5 @@ server/jbprobe
 client/build/
 client/stage/
 client/package.config.ps1
+client/assets/translations/
+client/Makefile
