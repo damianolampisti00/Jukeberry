@@ -86,7 +86,7 @@ func main() {
 
 	sendStatus := send(map[string]any{"cmd": "status"})
 	sendPl := send(map[string]any{"cmd": "playlists", "limit": 3})
-	send(map[string]any{"cmd": "search", "q": "vasco rossi", "limit": 2})
+	sendSearch := send(map[string]any{"cmd": "search", "q": "vasco rossi", "limit": 2})
 	send(map[string]any{"cmd": "audio", "on": true})
 	playID := send(map[string]any{"cmd": "play", "uri": *track})
 	start := time.Now()
@@ -178,6 +178,14 @@ func main() {
 			for _, it := range items {
 				p := it.(map[string]any)
 				fmt.Printf("  playlist: %v (%v tracks)\n", p["name"], p["length"])
+			}
+		}
+	}
+	if res, ok := replies[sendSearch]["data"].(map[string]any); ok {
+		for kind, items := range res {
+			for _, it := range items.([]any) {
+				m := it.(map[string]any)
+				fmt.Printf("  search %s: %v | %v | image %v\n", kind, m["name"], m["subtitle"], m["image"] != nil)
 			}
 		}
 	}
