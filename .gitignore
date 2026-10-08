@@ -1,0 +1,8 @@
+server/data/
+server/jukeberry-gateway
+server/jbprobe
+*.wav
+*.bar
+client/build/
+client/stage/
+client/package.config.ps1
