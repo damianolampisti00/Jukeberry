@@ -16,6 +16,7 @@ TabbedPane {
     }
 
     onCreationCompleted: {
+        Application.setCover(activeFrame)
         if (!player.configured) settingsSheet.open()
     }
 
@@ -31,6 +32,63 @@ TabbedPane {
     }
 
     attachedObjects: [
+        // Active Frame (the minimized app on the home screen, 334x396 on the
+        // Q5): the cover full size, title and artist on a dark band.
+        SceneCover {
+            id: activeFrame
+            content: Container {
+                background: Color.create("#121212")
+                layout: DockLayout {}
+                ImageView {
+                    visible: player.hasTrack
+                    imageSource: player.cover != "" ? player.cover : "asset:///images/ic_playlist.png"
+                    horizontalAlignment: HorizontalAlignment.Fill
+                    verticalAlignment: VerticalAlignment.Fill
+                    scalingMethod: ScalingMethod.AspectFill
+                }
+                ImageView {
+                    visible: !player.hasTrack
+                    imageSource: "asset:///icon.png"
+                    horizontalAlignment: HorizontalAlignment.Center
+                    verticalAlignment: VerticalAlignment.Center
+                }
+                Container {
+                    horizontalAlignment: HorizontalAlignment.Fill
+                    verticalAlignment: VerticalAlignment.Bottom
+                    background: Color.create("#D0121212")
+                    leftPadding: 16
+                    rightPadding: 12
+                    topPadding: 10
+                    bottomPadding: 12
+                    layout: StackLayout {
+                        orientation: LayoutOrientation.LeftToRight
+                    }
+                    Container {
+                        layoutProperties: StackLayoutProperties {
+                            spaceQuota: 1
+                        }
+                        Label {
+                            text: player.hasTrack ? player.title : "Jukeberry"
+                            textStyle.base: SystemDefaults.TextStyles.BodyText
+                            textStyle.fontWeight: FontWeight.Bold
+                            textStyle.color: Color.White
+                        }
+                        Label {
+                            text: player.hasTrack ? player.artists : (player.connected ? qsTr("Nothing playing") : player.message)
+                            textStyle.base: SystemDefaults.TextStyles.SmallText
+                            textStyle.color: root.muted
+                        }
+                    }
+                    ImageView {
+                        visible: player.hasTrack
+                        verticalAlignment: VerticalAlignment.Center
+                        imageSource: player.playing ? "asset:///images/ic_play.png" : "asset:///images/ic_pause.png"
+                        preferredWidth: 56
+                        preferredHeight: 56
+                    }
+                }
+            }
+        },
         ComponentDefinition {
             id: tracksPageDefinition
             Page {
