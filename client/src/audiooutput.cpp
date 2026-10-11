@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QFile>
 
 #include <string.h>
 #include <sys/asoundlib.h>
@@ -15,13 +16,36 @@ namespace {
 const int kFragMs = 20;
 const int kFragBytes = AudioOutput::kBytesPerMs * kFragMs; // 3840
 
+// The system's current output, from the audio service's PPS object
+// ("path::/dev/snd/a2dpp" with a Bluetooth device).
+QByteArray defaultOutputPath()
+{
+    QFile f("/pps/services/audio/devices/default");
+    if (!f.open(QIODevice::ReadOnly)) return QByteArray();
+    foreach (const QByteArray &line, f.readAll().split('\n')) {
+        if (line.startsWith("path::")) return line.mid(6).trimmed();
+    }
+    return QByteArray();
+}
+
 snd_pcm_t *openDevice(unsigned int *audioman, int *fragBytes, QString *error)
 {
     snd_pcm_t *pcm = 0;
     int card = -1, device = 0;
     *audioman = 0;
-    int rc = audio_manager_snd_pcm_open_preferred(AUDIO_TYPE_MULTIMEDIA, &pcm, audioman, &card, &device,
+    int rc;
+    // "Preferred" is the phone's own audio chip even with Bluetooth on: the
+    // DSP routes it to the A2DP device, which then never starts streaming.
+    // The system's player writes to the A2DP device itself, and so do we.
+    QByteArray path = defaultOutputPath();
+    if (path.endsWith("a2dpp")) {
+        rc = audio_manager_snd_pcm_open_name(AUDIO_TYPE_MULTIMEDIA, &pcm, audioman, path.data(),
+                                             SND_PCM_OPEN_PLAYBACK);
+        qDebug() << "[Jukeberry:audio] open" << path << rc;
+    } else {
+        rc = audio_manager_snd_pcm_open_preferred(AUDIO_TYPE_MULTIMEDIA, &pcm, audioman, &card, &device,
                                                   SND_PCM_OPEN_PLAYBACK);
+    }
     if (rc < 0) {
         *error = QString("open: %1").arg(snd_strerror(rc));
         return 0;
