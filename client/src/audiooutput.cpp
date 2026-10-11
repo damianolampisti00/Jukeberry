@@ -139,11 +139,16 @@ protected:
                 msleep(500);
                 continue;
             }
-            if (type != AUDIO_ROUTING_CHANGE || !params) continue;
-            const audio_manager_routing_change_t *change =
-                    static_cast<audio_manager_routing_change_t *>(params);
-            const int now = change->dev_now;
-            if (now == last) continue;
+            int now = -1;
+            if (type == AUDIO_ROUTING_CHANGE && params)
+                now = static_cast<audio_manager_routing_change_t *>(params)->dev_now;
+            // Until dispatched, get_event returns the same event again at
+            // once: the next change never arrived and this thread spun.
+            audio_manager_dispatch_event(events, type, params);
+            if (now < 0 || now == last) {
+                msleep(100); // a repeat: never spin
+                continue;
+            }
             last = now;
             qDebug() << "[Jukeberry:audio] output device now" << now;
             *m_flag = 1;
