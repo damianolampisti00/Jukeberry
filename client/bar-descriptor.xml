@@ -8,7 +8,7 @@
     </configuration>
     <name>Jukeberry</name>
     <versionNumber>0.1.0</versionNumber>
-    <buildId>14</buildId>
+    <buildId>16</buildId>
     <description>Spotify Connect player for BlackBerry 10, through your own Jukeberry server. Not affiliated with Spotify.</description>
     <author>Jukeberry</author>
     <initialWindow>

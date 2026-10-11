@@ -8,7 +8,8 @@
 #include <string.h>
 #include <sys/asoundlib.h>
 #include <audio/audio_manager_routing.h>
-#include <audio/audio_manager_event.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <errno.h>
 
 namespace {
@@ -87,9 +88,11 @@ snd_pcm_t *openDevice(unsigned int *audioman, int *fragBytes, QString *error)
     return pcm;
 }
 
-void closeDevice(snd_pcm_t *pcm, unsigned int audioman)
+void closeDevice(snd_pcm_t *pcm, unsigned int audioman, bool discard)
 {
-    snd_pcm_plugin_flush(pcm, SND_PCM_CHANNEL_PLAYBACK);
+    // drain discards what is queued, flush plays it out
+    if (discard) snd_pcm_plugin_playback_drain(pcm);
+    else snd_pcm_plugin_flush(pcm, SND_PCM_CHANNEL_PLAYBACK);
     snd_pcm_close(pcm);
     if (audioman) audio_manager_free_handle(audioman);
 }
@@ -114,10 +117,12 @@ AudioOutput::AudioOutput(AudioRing *source, QObject *parent) :
 }
 
 // Waits for routing changes (a Bluetooth device or a headset connected or
-// removed) on its own thread: audio_manager_get_event() blocks, and the event
-// fd reads as ready even with nothing queued, so it can't be polled from the
-// playback loop. A stream opened on the "preferred" output stays where it
-// was, so the output thread reopens the device on the new route.
+// removed) on its own thread, reading the audio service's PPS object for the
+// default output: it changes at the moment of the switch. (The audio
+// manager's routing event comes ~200 ms later, and in between the system
+// already plays our old stream at the new device's volume: a loud burst from
+// the speaker when Bluetooth connects.) A stream opened on one output stays
+// there, so the output thread then reopens the device on the new route.
 class RouteWatcher : public QThread
 {
 public:
@@ -125,33 +130,31 @@ public:
 protected:
     void run()
     {
-        audio_manager_event_context_t *events = 0;
-        if (audio_manager_get_event_context(&events) != EOK || !events) return;
-        if (audio_manager_add_routing_change_event(events) != EOK) {
-            audio_manager_release_event_context(&events);
-            return;
-        }
-        int last = -1;
+        QByteArray current;
         for (;;) {
-            audio_manager_event_type_t type;
-            void *params = 0;
-            if (audio_manager_get_event(events, &type, &params) != EOK) {
-                msleep(500);
+            // ?wait: each read blocks until the object changes.
+            const int fd = ::open("/pps/services/audio/devices/default?wait", O_RDONLY);
+            if (fd < 0) {
+                sleep(5);
                 continue;
             }
-            int now = -1;
-            if (type == AUDIO_ROUTING_CHANGE && params)
-                now = static_cast<audio_manager_routing_change_t *>(params)->dev_now;
-            // Until dispatched, get_event returns the same event again at
-            // once: the next change never arrived and this thread spun.
-            audio_manager_dispatch_event(events, type, params);
-            if (now < 0 || now == last) {
-                msleep(100); // a repeat: never spin
-                continue;
+            char buf[1024];
+            ssize_t n;
+            while ((n = ::read(fd, buf, sizeof buf - 1)) > 0) {
+                buf[n] = 0;
+                QByteArray device;
+                foreach (const QByteArray &line, QByteArray(buf).split('\n')) {
+                    if (line.startsWith("path::")) device = line.mid(6).trimmed();
+                }
+                if (device.isEmpty() || device == current) continue;
+                if (!current.isEmpty()) {
+                    qDebug() << "[Jukeberry:audio] output now" << device;
+                    *m_flag = 1;
+                }
+                current = device;
             }
-            last = now;
-            qDebug() << "[Jukeberry:audio] output device now" << now;
-            *m_flag = 1;
+            ::close(fd);
+            sleep(1);
         }
     }
 private:
@@ -221,7 +224,7 @@ void AudioOutput::run()
             const ssize_t n = snd_pcm_plugin_write(pcm, buffer.constData(), frag);
             if (n < frag) recover(pcm, &underruns);
         }
-        closeDevice(pcm, audioman);
+        closeDevice(pcm, audioman, rerouted);
         deviceOpen = 0;
         emit audioHandleChanged(0);
         if (rerouted) {
