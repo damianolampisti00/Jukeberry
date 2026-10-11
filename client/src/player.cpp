@@ -728,6 +728,8 @@ void Player::onNpPause()
 void Player::onNpRevoked()
 {
     trace("np revoked");
-    // Another app took the media controls (a video, another player): pause.
-    if (m_playing) playPause();
+    // Not a reason to pause: the service is revoked also when our own stream
+    // starts a track (every song paused itself). Calls and other players
+    // already silence the stream through the audio manager; the controls are
+    // taken back at the next update.
 }
