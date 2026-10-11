@@ -355,6 +355,8 @@ func (g *gateway) run(ctx context.Context, c *client, cmd *command) (json.RawMes
 			return nil, err
 		}
 		return call("POST", "/player/add_to_queue", map[string]string{"uri": cmd.URI}, false)
+	case "upcoming": // the queue: upcoming tracks in play order (patched go-librespot, GET /player/queue)
+		return call("GET", "/player/queue", nil, false)
 	case "playlists": // {offset?, limit?}
 		limit := cmd.Limit
 		if limit <= 0 || limit > 500 {

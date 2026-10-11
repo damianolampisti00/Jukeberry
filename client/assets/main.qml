@@ -1,4 +1,5 @@
 import bb.cascades 1.2
+import bb.system 1.2
 
 // Jukeberry: three tabs (Now Playing, Library, Search) over the C++ `player`
 // (src/player.hpp). Dark theme (CASCADES_THEME=dark in bar-descriptor.xml).
@@ -17,6 +18,10 @@ TabbedPane {
 
     onCreationCompleted: {
         Application.setCover(activeFrame)
+        player.queued.connect(function () {
+            queuedToast.body = qsTr("Added to the queue")
+            queuedToast.show()
+        })
         if (!player.configured) settingsSheet.open()
     }
 
@@ -32,6 +37,67 @@ TabbedPane {
     }
 
     attachedObjects: [
+        SystemToast {
+            id: queuedToast
+        },
+        // The play queue: upcoming tracks in play order, the ones added with
+        // Add to queue first. A tap jumps to that track.
+        Sheet {
+            id: queueSheet
+            onOpened: player.setQueueVisible(true)
+            onClosed: player.setQueueVisible(false)
+            Page {
+                titleBar: TitleBar {
+                    title: qsTr("Queue")
+                    dismissAction: ActionItem {
+                        title: qsTr("Close")
+                        onTriggered: queueSheet.close()
+                    }
+                }
+                Container {
+                    layout: DockLayout {}
+                    ListView {
+                        id: queueList
+                        dataModel: player.queue
+                        listItemComponents: [
+                            ListItemComponent {
+                                StandardListItem {
+                                    title: ListItemData.name
+                                    description: ListItemData.subtitle
+                                    status: ListItemData.queued ? qsTr("In queue") : ListItemData.duration
+                                    imageSource: ListItemData.thumb ? ListItemData.thumb : "asset:///images/ic_playlist.png"
+                                }
+                            }
+                        ]
+                        onTriggered: {
+                            var item = dataModel.data(indexPath)
+                            player.skipTo(item.uri)
+                            queueSheet.close()
+                        }
+                    }
+                    Label {
+                        id: queueEmpty
+                        visible: false
+                        text: qsTr("Nothing coming up")
+                        horizontalAlignment: HorizontalAlignment.Center
+                        verticalAlignment: VerticalAlignment.Center
+                        textStyle.color: root.muted
+                    }
+                    ActivityIndicator {
+                        running: player.queueLoading
+                        visible: running
+                        preferredWidth: 120
+                        horizontalAlignment: HorizontalAlignment.Center
+                        verticalAlignment: VerticalAlignment.Center
+                    }
+                }
+            }
+            onCreationCompleted: {
+                player.queueChanged.connect(function () {
+                    queueEmpty.visible = !player.queueLoading && player.queue.size() == 0
+                })
+            }
+        },
         // Active Frame (the minimized app on the home screen, 334x396 on the
         // Q5): the cover full size, title and artist on a dark band.
         SceneCover {
@@ -111,6 +177,7 @@ TabbedPane {
                     layout: DockLayout {}
                     ListView {
                         dataModel: player.tracks
+                        function addToQueue(uri) { player.addToQueue(uri) }
                         listItemComponents: [
                             ListItemComponent {
                                 StandardListItem {
@@ -118,6 +185,16 @@ TabbedPane {
                                     description: ListItemData.subtitle
                                     status: ListItemData.duration
                                     imageSource: ListItemData.thumb ? ListItemData.thumb : "asset:///images/ic_playlist.png"
+                                    // Add to queue (delegates reach player through ListItem.view)
+                                    contextActions: [
+                                        ActionSet {
+                                            ActionItem {
+                                                title: qsTr("Add to queue")
+                                                imageSource: "asset:///images/ic_queue_add.png"
+                                                onTriggered: ListItem.view.addToQueue(ListItemData.uri)
+                                            }
+                                        }
+                                    ]
                                 }
                             }
                         ]
@@ -199,6 +276,14 @@ TabbedPane {
         title: qsTr("Now Playing")
         imageSource: "asset:///images/ic_tab_now.png"
         Page {
+            actions: [
+                ActionItem {
+                    title: qsTr("Queue")
+                    imageSource: "asset:///images/ic_queue.png"
+                    ActionBar.placement: ActionBarPlacement.OnBar
+                    onTriggered: queueSheet.open()
+                }
+            ]
             Container {
                 background: Color.create("#121212")
                 layout: DockLayout {}
@@ -406,6 +491,7 @@ TabbedPane {
                         layout: DockLayout {}
                         ListView {
                             dataModel: player.results
+                            function addToQueue(uri) { player.addToQueue(uri) }
                             function itemType(data, indexPath) {
                                 return data.kind == "header" ? "header" : "item"
                             }
@@ -423,6 +509,16 @@ TabbedPane {
                                         description: ListItemData.subtitle
                                         status: ListItemData.duration ? ListItemData.duration : ""
                                         imageSource: ListItemData.thumb ? ListItemData.thumb : "asset:///images/ic_playlist.png"
+                                        contextActions: [
+                                            ActionSet {
+                                                ActionItem {
+                                                    title: qsTr("Add to queue")
+                                                    imageSource: "asset:///images/ic_queue_add.png"
+                                                    enabled: ListItemData.kind == "track"
+                                                    onTriggered: ListItem.view.addToQueue(ListItemData.uri)
+                                                }
+                                            }
+                                        ]
                                     }
                                 }
                             ]

@@ -48,6 +48,8 @@ class Player : public QObject
     Q_PROPERTY(bb::cascades::DataModel *playlists READ playlists CONSTANT)
     Q_PROPERTY(bb::cascades::DataModel *tracks READ tracks CONSTANT)
     Q_PROPERTY(bb::cascades::DataModel *results READ results CONSTANT)
+    Q_PROPERTY(bb::cascades::DataModel *queue READ queue CONSTANT)
+    Q_PROPERTY(bool queueLoading READ queueLoading NOTIFY queueChanged)
     Q_PROPERTY(QString tracksTitle READ tracksTitle NOTIFY tracksChanged)
     Q_PROPERTY(QString tracksUri READ tracksUri NOTIFY tracksChanged)
     Q_PROPERTY(bool tracksLoading READ tracksLoading NOTIFY tracksChanged)
@@ -80,6 +82,8 @@ public:
     bb::cascades::DataModel *playlists() const { return m_playlists; }
     bb::cascades::DataModel *tracks() const { return m_tracks; }
     bb::cascades::DataModel *results() const { return m_results; }
+    bb::cascades::DataModel *queue() const { return m_queue; }
+    bool queueLoading() const { return m_queueLoading; }
     QString tracksTitle() const { return m_tracksTitle; }
     QString tracksUri() const { return m_tracksUri; }
     bool tracksLoading() const { return m_tracksLoading; }
@@ -97,9 +101,16 @@ public:
     Q_INVOKABLE void loadPlaylists();
     Q_INVOKABLE void openContext(const QString &uri, const QString &title);
     Q_INVOKABLE void search(const QString &query);
+    // The play queue (upcoming tracks in play order): refreshed by
+    // loadQueue() and after every track change while it is shown.
+    Q_INVOKABLE void setQueueVisible(bool visible);
+    // Jumps ahead to an upcoming track; adds a track to the queue.
+    Q_INVOKABLE void skipTo(const QString &uri);
+    Q_INVOKABLE void addToQueue(const QString &uri);
     Q_INVOKABLE QString formatTime(int ms) const;
 
 public slots:
+    void loadQueue();
     // Slots, not just invokables: the lock screen's next/previous connect to them.
     void next();
     void previous();
@@ -117,6 +128,8 @@ signals:
     void playlistsChanged();
     void tracksChanged();
     void resultsChanged();
+    void queueChanged();
+    void queued();
 
     // To the link thread.
     void linkConnect(const QUrl &url, const QByteArray &token);
@@ -135,7 +148,7 @@ private slots:
     void onNpRevoked();
 
 private:
-    enum Purpose { None, Status, Playlists, Context, Search, Liked, Art };
+    enum Purpose { None, Status, Playlists, Context, Search, Liked, Art, Queue };
     struct Pending {
         Pending() : purpose(None) {}
         Purpose purpose;
@@ -153,6 +166,7 @@ private:
     void setPositionBase(qint64 ms);
     void fillContext(const QVariantMap &data);
     void fillResults(const QVariantMap &data);
+    void fillQueue(const QVariantMap &data);
     // Cover art: a local file per URL; "" until it is fetched.
     QString artFile(const QString &url) const;
     void requestArt(const QString &url);
@@ -181,7 +195,8 @@ private:
     int m_repeat;
     QTimer m_tick;
 
-    bb::cascades::ArrayDataModel *m_playlists, *m_tracks, *m_results;
+    bb::cascades::ArrayDataModel *m_playlists, *m_tracks, *m_results, *m_queue;
+    bool m_queueLoading, m_queueVisible;
     QString m_tracksTitle, m_tracksUri;
     bool m_tracksLoading, m_playlistsLoading, m_searching;
     int m_contextPolls;

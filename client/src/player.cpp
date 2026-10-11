@@ -56,6 +56,7 @@ Player::Player(QObject *parent) :
         m_duration(0), m_posBase(0),
         m_playing(false), m_liked(false), m_shuffle(false), m_repeat(0),
         m_tracksLoading(false), m_playlistsLoading(false), m_searching(false),
+        m_queueLoading(false), m_queueVisible(false),
         m_contextPolls(0),
         m_np(0)
 {
@@ -71,6 +72,7 @@ Player::Player(QObject *parent) :
     m_playlists = new ArrayDataModel(this);
     m_tracks = new ArrayDataModel(this);
     m_results = new ArrayDataModel(this);
+    m_queue = new ArrayDataModel(this);
 
     m_tick.setInterval(500);
     connect(&m_tick, SIGNAL(timeout()), this, SLOT(onTick()));
@@ -258,6 +260,11 @@ void Player::onText(const QByteArray &utf8)
         else setMessage(m.value("error").toString());
         emit resultsChanged();
         break;
+    case Queue:
+        m_queueLoading = false;
+        if (ok) fillQueue(data.toMap());
+        emit queueChanged();
+        break;
     case Liked:
         foreach (const QVariant &v, data.toMap().value("items").toList()) {
             const QVariantMap s = v.toMap();
@@ -281,6 +288,7 @@ void Player::onEvent(const QString &type, const QVariantMap &data)
     if (type == "metadata") {
         applyTrack(data);
         setPositionBase(data.value("position").toLongLong());
+        if (m_queueVisible) loadQueue(); // the queue moved on
     } else if (type == "playing") {
         setPlaying(true);
     } else if (type == "paused" || type == "stopped") {
@@ -558,6 +566,62 @@ void Player::fillResults(const QVariantMap &d)
     }
 }
 
+// --- play queue ------------------------------------------------------------
+
+void Player::loadQueue()
+{
+    if (send("upcoming", QVariantMap(), Queue)) {
+        m_queueLoading = true;
+        emit queueChanged();
+    }
+}
+
+void Player::setQueueVisible(bool visible)
+{
+    m_queueVisible = visible;
+    if (visible) loadQueue();
+}
+
+void Player::skipTo(const QString &uri)
+{
+    QVariantMap args;
+    args["uri"] = uri;
+    send("next", args);
+}
+
+void Player::addToQueue(const QString &uri)
+{
+    QVariantMap args;
+    args["uri"] = uri;
+    if (send("queue", args)) {
+        emit queued();
+        if (m_queueVisible) QTimer::singleShot(800, this, SLOT(loadQueue()));
+    }
+}
+
+// The gateway's "upcoming": {length, items: [{uri, provider, track|null}]};
+// tracks added to the queue come first (provider "queue").
+void Player::fillQueue(const QVariantMap &d)
+{
+    m_queue->clear();
+    foreach (const QVariant &v, d.value("items").toList()) {
+        const QVariantMap e = v.toMap();
+        const QVariantMap t = e.value("track").toMap();
+        QVariantMap item;
+        item["kind"] = "track";
+        item["uri"] = e.value("uri");
+        item["queued"] = e.value("provider").toString() == "queue";
+        item["name"] = t.isEmpty() ? tr("Loading...") : t.value("name").toString();
+        item["subtitle"] = joinStrings(t.value("artist_names"));
+        item["duration"] = formatTime(t.value("duration").toInt());
+        const QString image = thumbUrl(t.value("album_cover_url").toString());
+        item["image"] = image;
+        item["thumb"] = artFile(image);
+        if (!image.isEmpty() && item["thumb"].toString().isEmpty()) requestArt(image);
+        m_queue->append(item);
+    }
+}
+
 // --- cover art -------------------------------------------------------------
 
 QString Player::artFile(const QString &url) const
@@ -596,8 +660,8 @@ void Player::applyArt(const QString &url, const QString &file)
         emit coverChanged();
         updateNowPlaying();
     }
-    ArrayDataModel *models[] = { m_playlists, m_tracks, m_results };
-    for (int k = 0; k < 3; ++k) {
+    ArrayDataModel *models[] = { m_playlists, m_tracks, m_results, m_queue };
+    for (int k = 0; k < 4; ++k) {
         ArrayDataModel *model = models[k];
         for (int i = 0; i < model->size(); ++i) {
             QVariantMap item = model->value(i).toMap();

@@ -24,7 +24,8 @@ Tested on a BlackBerry Q5 (BB10 10.3.3) with the server on Linux.
 
 ## Features
 
-- Now Playing with cover art, seek bar, play/pause, next/previous, shuffle, repeat, like.
+- Now Playing with cover art, seek bar, play/pause, next/previous, shuffle, repeat, like,
+  and the play queue (tap a track to jump to it; "Add to queue" on any track).
 - Your library: Liked Songs and every playlist, albums and artists as track lists.
 - Search: songs, albums, artists, playlists.
 - Keeps playing in the background and with the screen locked; lock-screen and headset
@@ -44,9 +45,14 @@ flac mpg123 alsa-lib`).
 
 ```
 git clone https://github.com/devgianlu/go-librespot && cd go-librespot
+# Optional, for the app's play queue: adds GET /player/queue (tested on v0.10.3).
+git apply /path/to/Jukeberry/server/patches/go-librespot-player-queue.patch
+go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.5.0 --config=api-codegen.yml api-spec.yml
 go build -o ~/jukeberry/go-librespot-daemon ./cmd/daemon
 mkdir -p ~/jukeberry/librespot && mkfifo -m 600 ~/jukeberry/librespot/audio.fifo
 ```
+
+Without the patch everything works except the Queue screen, which stays empty.
 
 `~/jukeberry/librespot/config.yml`:
 

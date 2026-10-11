@@ -1,0 +1,154 @@
+From eba09a57ca9a5eb358b6f670197a71ab55afee42 Mon Sep 17 00:00:00 2001
+From: Jukeberry <jukeberry@localhost>
+Date: Sun, 11 Oct 2026 17:47:16 +0200
+Subject: [PATCH] Add GET /player/queue: the upcoming tracks in play order
+
+---
+ api-spec.yml               | 47 ++++++++++++++++++++++++++++++++++++++
+ daemon/api_server.go       |  5 ++++
+ daemon/player.go           |  2 ++
+ daemon/track_meta_cache.go | 27 ++++++++++++++++++++++
+ 4 files changed, 81 insertions(+)
+
+diff --git a/api-spec.yml b/api-spec.yml
+index 3791a79..c4bfd2a 100644
+--- a/api-spec.yml
++++ b/api-spec.yml
+@@ -217,6 +217,37 @@ components:
+             - $ref: '#/components/schemas/track'
+           nullable: true
+           x-omitempty: true
++    queueItem:
++      x-go-name: ApiQueueItem
++      description: One upcoming track
++      type: object
++      required: [ uri, provider, track ]
++      properties:
++        uri:
++          description: The track URI
++          type: string
++        provider:
++          description: Where it comes from, "queue" for tracks added to the queue, "context" or "autoplay" otherwise
++          type: string
++        track:
++          description: Full track metadata, or null while it is not cached
++          allOf:
++            - $ref: '#/components/schemas/track'
++          nullable: true
++    queue:
++      x-go-name: ApiQueue
++      description: The upcoming tracks
++      type: object
++      required: [ length, items ]
++      properties:
++        length:
++          description: Number of upcoming tracks the player knows of
++          type: integer
++        items:
++          description: The first of them (at most 50), in play order
++          type: array
++          items:
++            $ref: '#/components/schemas/queueItem'
+     contextTrackItem:
+       x-go-name: ApiContextTrackItem
+       description: One entry of a context listing
+@@ -962,6 +993,22 @@ paths:
+       responses:
+         200:
+           description: Successful response
++  /player/queue:
++    get:
++      operationId: getPlayerQueue
++      description: >-
++        The upcoming tracks in play order, as the player will play them: the
++        context in its current (possibly shuffled) order with the tracks added
++        through /player/add_to_queue first. Metadata comes from the in-memory
++        cache (metadata.enabled), which already covers the tracks around the
++        playback position; entries not cached yet have a null track.
++      responses:
++        200:
++          description: Successful response
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/queue'
+   /player/add_to_queue:
+     post:
+       operationId: playerAddToQueue
+diff --git a/daemon/api_server.go b/daemon/api_server.go
+index c49805d..6169df3 100644
+--- a/daemon/api_server.go
++++ b/daemon/api_server.go
+@@ -134,6 +134,7 @@ const (
+ 	ApiRequestSetDeviceName           ApiRequestType = "set_device_name"
+ 	ApiRequestTypeReopenOutput        ApiRequestType = "reopen_output"
+ 	ApiRequestTypeContextTracks       ApiRequestType = "context_tracks"
++	ApiRequestTypeQueue               ApiRequestType = "queue"
+ 	ApiRequestTypeLibraryPlaylists    ApiRequestType = "library_playlists"
+ 	ApiRequestTypeSetLiked            ApiRequestType = "set_liked"
+ 	ApiRequestTypeGetLiked            ApiRequestType = "get_liked"
+@@ -549,6 +550,10 @@ func (s *ConcreteApiServer) GetToken(w http.ResponseWriter, _ *http.Request) {
+ 	s.handleRequest(ApiRequest{Type: ApiRequestTypeToken}, w)
+ }
+ 
++func (s *ConcreteApiServer) GetPlayerQueue(w http.ResponseWriter, _ *http.Request) {
++	s.handleRequest(ApiRequest{Type: ApiRequestTypeQueue}, w)
++}
++
+ func (s *ConcreteApiServer) GetContextTracks(w http.ResponseWriter, _ *http.Request, params GetContextTracksParams) {
+ 	s.handleRequest(ApiRequest{Type: ApiRequestTypeContextTracks, Data: ApiRequestDataContextTracks{Uri: params.Uri}}, w)
+ }
+diff --git a/daemon/player.go b/daemon/player.go
+index 8833642..0d2e734 100644
+--- a/daemon/player.go
++++ b/daemon/player.go
+@@ -704,6 +704,8 @@ func (p *AppPlayer) handleApiRequest(req ApiRequest) (any, error) {
+ 		resp.NextTrack = p.apiNextTrack()
+ 
+ 		return resp, nil
++	case ApiRequestTypeQueue:
++		return p.queueResponse(), nil
+ 	case ApiRequestTypeContextTracks:
+ 		if p.meta == nil {
+ 			return nil, ErrNotFound
+diff --git a/daemon/track_meta_cache.go b/daemon/track_meta_cache.go
+index d16e383..f4a07b6 100644
+--- a/daemon/track_meta_cache.go
++++ b/daemon/track_meta_cache.go
+@@ -669,6 +669,33 @@ func (p *AppPlayer) apiNextTrack() *ApiTrack {
+ 	return p.newApiResponseStatusMedia(media, 0)
+ }
+ 
++// maxQueueItems bounds the /player/queue listing: a client shows a screenful.
++const maxQueueItems = 50
++
++// queueResponse lists the upcoming tracks of the state window in play order,
++// with their metadata when cached (the window prefetch already fetches it for
++// these). Runs on the Run goroutine.
++func (p *AppPlayer) queueResponse() *ApiQueue {
++	resp := &ApiQueue{Items: []ApiQueueItem{}}
++	for _, t := range p.state.player.NextTracks {
++		if _, ok := metaExtensionKind(t.Uri); !ok {
++			continue // delimiters and the like, not tracks
++		}
++		resp.Length++
++		if len(resp.Items) >= maxQueueItems {
++			continue
++		}
++		item := ApiQueueItem{Uri: t.Uri, Provider: t.Provider}
++		if p.meta != nil && p.prodInfo != nil {
++			if media := p.meta.cache.get(t.Uri); media != nil {
++				item.Track = p.newApiResponseStatusMedia(media, 0)
++			}
++		}
++		resp.Items = append(resp.Items, item)
++	}
++	return resp
++}
++
+ // contextTracksResponse describes a context listing from what the caches hold:
+ // ready reports whether the track list itself is enumerated, cached how many
+ // of those tracks carry metadata. Runs on the Run goroutine.
+-- 
+2.56.0
+
