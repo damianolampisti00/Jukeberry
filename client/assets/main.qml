@@ -22,6 +22,10 @@ TabbedPane {
             queuedToast.body = qsTr("Added to the queue")
             queuedToast.show()
         })
+        player.notice.connect(function (text) {
+            queuedToast.body = text
+            queuedToast.show()
+        })
         if (!player.configured) settingsSheet.open()
     }
 
@@ -36,9 +40,39 @@ TabbedPane {
         player.openContext(uri, title)
     }
 
+    // "Add to playlist": the playlists the user may edit, to pick one.
+    function pickPlaylist(trackUri) {
+        var lists = player.editablePlaylists()
+        if (lists.length == 0) {
+            player.loadPlaylists()
+            queuedToast.body = qsTr("No playlist of yours to add to (yet): try again in a moment")
+            queuedToast.show()
+            return
+        }
+        playlistPicker.trackUri = trackUri
+        playlistPicker.lists = lists
+        playlistPicker.clearList()
+        for (var i = 0; i < lists.length; ++i) playlistPicker.appendItem(lists[i].name)
+        playlistPicker.show()
+    }
+
     attachedObjects: [
         SystemToast {
             id: queuedToast
+        },
+        SystemListDialog {
+            id: playlistPicker
+            property string trackUri
+            property variant lists
+            title: qsTr("Add to playlist")
+            selectionMode: ListSelectionMode.Single
+            confirmButton.label: qsTr("Add")
+            cancelButton.label: qsTr("Cancel")
+            onFinished: {
+                if (value != SystemUiResult.ConfirmButtonSelection || selectedIndices.length == 0) return
+                var pl = lists[selectedIndices[0]]
+                player.addToPlaylist(pl.uri, pl.name, trackUri)
+            }
         },
         // The play queue: upcoming tracks in play order, the ones added with
         // Add to queue first. A tap jumps to that track.
@@ -54,11 +88,21 @@ TabbedPane {
                         onTriggered: queueSheet.close()
                     }
                 }
+                actions: [
+                    ActionItem {
+                        title: qsTr("Clear queue")
+                        imageSource: "asset:///images/ic_queue_clear.png"
+                        ActionBar.placement: ActionBarPlacement.OnBar
+                        onTriggered: player.clearQueue()
+                    }
+                ]
                 Container {
                     layout: DockLayout {}
                     ListView {
                         id: queueList
                         dataModel: player.queue
+                        function move(uid, delta) { player.moveInQueue(uid, delta) }
+                        function remove(uid) { player.removeFromQueue(uid) }
                         listItemComponents: [
                             ListItemComponent {
                                 StandardListItem {
@@ -66,6 +110,30 @@ TabbedPane {
                                     description: ListItemData.subtitle
                                     status: ListItemData.queued ? qsTr("In queue") : ListItemData.duration
                                     imageSource: ListItemData.thumb ? ListItemData.thumb : "asset:///images/ic_playlist.png"
+                                    // Only the tracks added to the queue can be moved or removed
+                                    // (the playlist's own order stays as it is, as on Spotify).
+                                    contextActions: [
+                                        ActionSet {
+                                            ActionItem {
+                                                title: qsTr("Move up")
+                                                imageSource: "asset:///images/ic_move_up.png"
+                                                enabled: ListItemData.queued
+                                                onTriggered: ListItem.view.move(ListItemData.uid, -1)
+                                            }
+                                            ActionItem {
+                                                title: qsTr("Move down")
+                                                imageSource: "asset:///images/ic_move_down.png"
+                                                enabled: ListItemData.queued
+                                                onTriggered: ListItem.view.move(ListItemData.uid, 1)
+                                            }
+                                            ActionItem {
+                                                title: qsTr("Remove from queue")
+                                                imageSource: "asset:///images/ic_queue_remove.png"
+                                                enabled: ListItemData.queued
+                                                onTriggered: ListItem.view.remove(ListItemData.uid)
+                                            }
+                                        }
+                                    ]
                                 }
                             }
                         ]
@@ -178,6 +246,8 @@ TabbedPane {
                     ListView {
                         dataModel: player.tracks
                         function addToQueue(uri) { player.addToQueue(uri) }
+                        function setLiked(uri, liked) { player.setLiked(uri, liked) }
+                        function addToPlaylist(uri) { root.pickPlaylist(uri) }
                         listItemComponents: [
                             ListItemComponent {
                                 StandardListItem {
@@ -192,6 +262,18 @@ TabbedPane {
                                                 title: qsTr("Add to queue")
                                                 imageSource: "asset:///images/ic_queue_add.png"
                                                 onTriggered: ListItem.view.addToQueue(ListItemData.uri)
+                                            }
+                                            ActionItem {
+                                                title: ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
+                                                imageSource: ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
+                                                enabled: ListItemData.kind == "track"
+                                                onTriggered: ListItem.view.setLiked(ListItemData.uri, ! ListItemData.liked)
+                                            }
+                                            ActionItem {
+                                                title: qsTr("Add to playlist")
+                                                imageSource: "asset:///images/ic_playlist_add.png"
+                                                enabled: ListItemData.kind == "track"
+                                                onTriggered: ListItem.view.addToPlaylist(ListItemData.uri)
                                             }
                                         }
                                     ]
@@ -282,6 +364,12 @@ TabbedPane {
                     imageSource: "asset:///images/ic_queue.png"
                     ActionBar.placement: ActionBarPlacement.OnBar
                     onTriggered: queueSheet.open()
+                },
+                ActionItem {
+                    title: qsTr("Add to playlist")
+                    imageSource: "asset:///images/ic_playlist_add.png"
+                    enabled: player.hasTrack
+                    onTriggered: root.pickPlaylist(player.trackUri)
                 }
             ]
             Container {
@@ -492,6 +580,8 @@ TabbedPane {
                         ListView {
                             dataModel: player.results
                             function addToQueue(uri) { player.addToQueue(uri) }
+                            function setLiked(uri, liked) { player.setLiked(uri, liked) }
+                            function addToPlaylist(uri) { root.pickPlaylist(uri) }
                             function itemType(data, indexPath) {
                                 return data.kind == "header" ? "header" : "item"
                             }
@@ -516,6 +606,18 @@ TabbedPane {
                                                     imageSource: "asset:///images/ic_queue_add.png"
                                                     enabled: ListItemData.kind == "track"
                                                     onTriggered: ListItem.view.addToQueue(ListItemData.uri)
+                                                }
+                                                ActionItem {
+                                                    title: ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
+                                                    imageSource: ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
+                                                    enabled: ListItemData.kind == "track"
+                                                    onTriggered: ListItem.view.setLiked(ListItemData.uri, ! ListItemData.liked)
+                                                }
+                                                ActionItem {
+                                                    title: qsTr("Add to playlist")
+                                                    imageSource: "asset:///images/ic_playlist_add.png"
+                                                    enabled: ListItemData.kind == "track"
+                                                    onTriggered: ListItem.view.addToPlaylist(ListItemData.uri)
                                                 }
                                             }
                                         ]

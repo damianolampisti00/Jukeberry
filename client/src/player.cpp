@@ -238,6 +238,7 @@ void Player::onText(const QByteArray &utf8)
             const QString name = pl.value("name").toString();
             item["name"] = name.isEmpty() ? tr("Untitled playlist") : name;
             item["subtitle"] = tr("%1 tracks").arg(pl.value("length").toInt());
+            item["canEdit"] = pl.value("can_edit").toBool();
             const QString image = thumbUrl(pl.value("image_url").toString());
             item["image"] = image;
             item["thumb"] = artFile(image);
@@ -267,6 +268,19 @@ void Player::onText(const QByteArray &utf8)
         m_queueLoading = false;
         if (ok) fillQueue(data.toMap());
         emit queueChanged();
+        break;
+    case LikedList:
+        if (ok) {
+            foreach (const QVariant &v, data.toMap().value("items").toList()) {
+                const QVariantMap s = v.toMap();
+                m_likedCache.insert(s.value("uri").toString(), s.value("liked").toBool());
+            }
+            applyLikedCache();
+        }
+        break;
+    case PlaylistAdd:
+        if (ok) emit notice(tr("Added to %1").arg(p.key));
+        else setMessage(tr("Couldn't add to %1").arg(p.key));
         break;
     case Liked:
         foreach (const QVariant &v, data.toMap().value("items").toList()) {
@@ -517,6 +531,8 @@ void Player::fillContext(const QVariantMap &d)
         item["kind"] = "track";
         item["uri"] = e.value("uri");
         item["context"] = m_tracksUri;
+        item["liked"] = (m_tracksUri == "spotify:collection:tracks")
+                        || m_likedCache.value(e.value("uri").toString(), false);
         item["name"] = t.isEmpty() ? tr("Loading...") : t.value("name").toString();
         item["subtitle"] = joinStrings(t.value("artist_names"));
         item["duration"] = formatTime(t.value("duration").toInt());
@@ -530,6 +546,7 @@ void Player::fillContext(const QVariantMap &d)
     const bool more = (!ready || cached < length) && ++m_contextPolls < kMaxContextPolls;
     if (more) m_contextTimer.start(kContextPollMs);
     m_tracksLoading = !ready;
+    if (ready && m_tracksUri != "spotify:collection:tracks") requestLiked(m_tracks);
     emit tracksChanged();
 }
 
@@ -564,7 +581,49 @@ void Player::fillResults(const QVariantMap &d)
             item["thumb"] = artFile(image);
             if (item.contains("duration")) item["duration"] = formatTime(item.value("duration").toInt());
             if (!image.isEmpty()) requestArt(image);
+            if (item.value("kind") == "track") item["liked"] = m_likedCache.value(item.value("uri").toString(), false);
             m_results->append(item);
+        }
+    }
+    requestLiked(m_results);
+}
+
+// Liked state of a list's tracks, for its "Add to / Remove from Liked Songs"
+// action: the ones not known yet, asked 50 at a time.
+void Player::requestLiked(bb::cascades::ArrayDataModel *model)
+{
+    QVariantList batch;
+    for (int i = 0; i < model->size(); ++i) {
+        const QVariantMap item = model->value(i).toMap();
+        const QString uri = item.value("uri").toString();
+        if (item.value("kind") != "track" || !uri.startsWith("spotify:track:") || m_likedCache.contains(uri)) continue;
+        batch << uri;
+        if (batch.size() == 50) {
+            QVariantMap args;
+            args["uris"] = batch;
+            send("liked", args, LikedList);
+            batch.clear();
+        }
+    }
+    if (!batch.isEmpty()) {
+        QVariantMap args;
+        args["uris"] = batch;
+        send("liked", args, LikedList);
+    }
+}
+
+void Player::applyLikedCache()
+{
+    bb::cascades::ArrayDataModel *models[] = { m_tracks, m_results };
+    for (int m = 0; m < 2; ++m) {
+        for (int i = 0; i < models[m]->size(); ++i) {
+            QVariantMap item = models[m]->value(i).toMap();
+            const QString uri = item.value("uri").toString();
+            if (item.value("kind") != "track" || !m_likedCache.contains(uri)) continue;
+            const bool liked = m_likedCache.value(uri);
+            if (item.value("liked").toBool() == liked) continue;
+            item["liked"] = liked;
+            models[m]->replace(i, item);
         }
     }
 }
@@ -592,6 +651,98 @@ void Player::skipTo(const QString &uri)
     send("next", args);
 }
 
+void Player::setLiked(const QString &uri, bool liked)
+{
+    QVariantMap args;
+    args["uris"] = QVariantList() << uri;
+    args["liked"] = liked;
+    if (!send("like", args)) return;
+    m_likedCache.insert(uri, liked);
+    applyLikedCache();
+    if (uri == m_trackUri && m_liked != liked) {
+        m_liked = liked;
+        emit likedChanged();
+    }
+    emit notice(liked ? tr("Added to Liked Songs") : tr("Removed from Liked Songs"));
+}
+
+QVariantList Player::editablePlaylists() const
+{
+    QVariantList list;
+    for (int i = 0; i < m_playlists->size(); ++i) {
+        const QVariantMap item = m_playlists->value(i).toMap();
+        if (!item.value("canEdit").toBool()) continue;
+        QVariantMap p;
+        p["name"] = item.value("name");
+        p["uri"] = item.value("uri");
+        list << p;
+    }
+    return list;
+}
+
+void Player::addToPlaylist(const QString &playlistUri, const QString &playlistName, const QString &trackUri)
+{
+    QVariantMap args;
+    args["uri"] = playlistUri;
+    args["uris"] = QVariantList() << trackUri;
+    send("playlistadd", args, PlaylistAdd, playlistName);
+}
+
+// The queue's queued entries (uids, in order), changed and sent back whole:
+// the gateway's setqueue keeps those, in that order, and drops the others.
+QStringList Player::queuedUids() const
+{
+    QStringList uids;
+    for (int i = 0; i < m_queue->size(); ++i) {
+        const QVariantMap item = m_queue->value(i).toMap();
+        if (item.value("queued").toBool() && !item.value("uid").toString().isEmpty())
+            uids << item.value("uid").toString();
+    }
+    return uids;
+}
+
+void Player::sendQueue(const QStringList &uids)
+{
+    QVariantMap args;
+    args["uids"] = QVariant(uids);
+    send("setqueue", args);
+    QTimer::singleShot(700, this, SLOT(loadQueue())); // the player's own view of it
+}
+
+void Player::removeFromQueue(const QString &uid)
+{
+    QStringList uids = queuedUids();
+    uids.removeAll(uid);
+    for (int i = 0; i < m_queue->size(); ++i) {
+        if (m_queue->value(i).toMap().value("uid").toString() == uid) {
+            m_queue->removeAt(i);
+            break;
+        }
+    }
+    sendQueue(uids);
+}
+
+void Player::moveInQueue(const QString &uid, int delta)
+{
+    QStringList uids = queuedUids();
+    const int from = uids.indexOf(uid);
+    const int to = from + delta;
+    if (from < 0 || to < 0 || to >= uids.size()) return;
+    uids.move(from, to);
+    // Queued entries come first in the model, in the same order.
+    m_queue->move(from, to);
+    sendQueue(uids);
+}
+
+void Player::clearQueue()
+{
+    for (int i = m_queue->size() - 1; i >= 0; --i) {
+        if (m_queue->value(i).toMap().value("queued").toBool()) m_queue->removeAt(i);
+    }
+    sendQueue(QStringList());
+    emit queueChanged();
+}
+
 void Player::addToQueue(const QString &uri)
 {
     QVariantMap args;
@@ -614,6 +765,7 @@ void Player::fillQueue(const QVariantMap &d)
         item["kind"] = "track";
         item["uri"] = e.value("uri");
         item["queued"] = e.value("provider").toString() == "queue";
+        item["uid"] = e.value("uid");
         item["name"] = t.isEmpty() ? tr("Loading...") : t.value("name").toString();
         item["subtitle"] = joinStrings(t.value("artist_names"));
         item["duration"] = formatTime(t.value("duration").toInt());

@@ -34,6 +34,7 @@ class Player : public QObject
 
     Q_PROPERTY(bool hasTrack READ hasTrack NOTIFY trackChanged)
     Q_PROPERTY(QString title READ title NOTIFY trackChanged)
+    Q_PROPERTY(QString trackUri READ trackUri NOTIFY trackChanged)
     Q_PROPERTY(QString artists READ artists NOTIFY trackChanged)
     Q_PROPERTY(QString album READ album NOTIFY trackChanged)
     Q_PROPERTY(QString contextName READ contextName NOTIFY trackChanged)
@@ -67,6 +68,7 @@ public:
     bool configured() const { return !m_serverUrl.isEmpty() && !m_token.isEmpty(); }
 
     bool hasTrack() const { return !m_trackUri.isEmpty(); }
+    QString trackUri() const { return m_trackUri; }
     QString title() const { return m_title; }
     QString artists() const { return m_artists; }
     QString album() const { return m_album; }
@@ -107,6 +109,15 @@ public:
     // Jumps ahead to an upcoming track; adds a track to the queue.
     Q_INVOKABLE void skipTo(const QString &uri);
     Q_INVOKABLE void addToQueue(const QString &uri);
+    // Library: Liked Songs and the user's own playlists.
+    Q_INVOKABLE void setLiked(const QString &uri, bool liked);
+    Q_INVOKABLE QVariantList editablePlaylists() const; // [{name, uri}], the ones the user may add to
+    Q_INVOKABLE void addToPlaylist(const QString &playlistUri, const QString &playlistName,
+                                   const QString &trackUri);
+    // The tracks added to the queue (not the context's): uid from the queue model.
+    Q_INVOKABLE void removeFromQueue(const QString &uid);
+    Q_INVOKABLE void moveInQueue(const QString &uid, int delta); // -1 up, +1 down
+    Q_INVOKABLE void clearQueue();
     Q_INVOKABLE QString formatTime(int ms) const;
 
 public slots:
@@ -130,6 +141,8 @@ signals:
     void resultsChanged();
     void queueChanged();
     void queued();
+    // A short confirmation for a toast ("Added to <playlist>"...).
+    void notice(const QString &text);
 
     // To the link thread.
     void linkConnect(const QUrl &url, const QByteArray &token);
@@ -149,13 +162,17 @@ private slots:
     void onAudioHandle(unsigned int handle);
 
 private:
-    enum Purpose { None, Status, Playlists, Context, Search, Liked, Art, Queue };
+    enum Purpose { None, Status, Playlists, Context, Search, Liked, Art, Queue, LikedList, PlaylistAdd };
     struct Pending {
         Pending() : purpose(None) {}
         Purpose purpose;
         QString key;
     };
 
+    void requestLiked(bb::cascades::ArrayDataModel *model);
+    void applyLikedCache();
+    QStringList queuedUids() const;
+    void sendQueue(const QStringList &uids);
     qint64 send(const QString &cmd, const QVariantMap &args = QVariantMap(), Purpose purpose = None,
                 const QString &key = QString());
     void connectNow();
@@ -186,6 +203,7 @@ private:
     qint64 m_nextId;
     QHash<qint64, Pending> m_pending;
     QHash<QString, bool> m_artInFlight;
+    QHash<QString, bool> m_likedCache; // track uri -> in Liked Songs
     QString m_artDir;
 
     QString m_trackUri, m_title, m_artists, m_album, m_contextName, m_coverUrl, m_cover;

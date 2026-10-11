@@ -242,6 +242,7 @@ type command struct {
 	Value     *bool    `json:"value"`
 	On        *bool    `json:"on"`
 	URIs      []string `json:"uris"`
+	UIDs      []string `json:"uids"`
 	Liked     *bool    `json:"liked"`
 	Offset    int      `json:"offset"`
 	Limit     int      `json:"limit"`
@@ -364,6 +365,27 @@ func (g *gateway) run(ctx context.Context, c *client, cmd *command) (json.RawMes
 		return call("POST", "/player/add_to_queue", map[string]string{"uri": cmd.URI}, false)
 	case "upcoming": // the queue: upcoming tracks in play order (patched go-librespot, GET /player/queue)
 		return call("GET", "/player/queue", nil, false)
+	case "setqueue": // {uids}: the queued tracks to keep, in order (patched go-librespot, POST /player/queue/set)
+		if cmd.UIDs == nil {
+			cmd.UIDs = []string{}
+		}
+		if len(cmd.UIDs) > 500 {
+			return nil, errors.New("too many uids")
+		}
+		return call("POST", "/player/queue/set", map[string]any{"uids": cmd.UIDs}, false)
+	case "playlistadd": // {uri: playlist, uris: tracks}: append to a playlist the user may edit
+		if !strings.HasPrefix(cmd.URI, "spotify:playlist:") {
+			return nil, errors.New("uri must be a playlist")
+		}
+		if len(cmd.URIs) == 0 || len(cmd.URIs) > 50 {
+			return nil, errors.New("1 to 50 uris")
+		}
+		for _, u := range cmd.URIs {
+			if err := needURI(u); err != nil {
+				return nil, err
+			}
+		}
+		return call("POST", "/library/playlists/add_tracks", map[string]any{"playlist_uri": cmd.URI, "uris": cmd.URIs}, false)
 	case "playlists": // {offset?, limit?}
 		limit := cmd.Limit
 		if limit <= 0 || limit > 500 {
