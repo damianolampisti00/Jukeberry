@@ -100,6 +100,9 @@ echo "Copying $barName and installbar.sh to the phone ($PhoneIp)..."
 `"`${SSH[@]}`" "cat > /accounts/1000/shared/downloads/$barName" < "$barPosix"
 `"`${SSH[@]}`" "cat > /accounts/1000/shared/downloads/installbar.sh" < "$installerPosix"
 echo "Installing..."
+# A running copy keeps playing in the background after an update, and the next
+# launch starts a second one: two players then fight over the media controls.
+`"`${SSH[@]}`" "slay -f Jukeberry.so 2>/dev/null; true"
 `"`${SSH[@]}`" "cat /accounts/1000/shared/downloads/installbar.sh | sh -s -- $barName"
 "@
 # A plain file, not a pipe: PowerShell's pipe-to-native-stdin encoding adds a
