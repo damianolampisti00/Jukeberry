@@ -51,6 +51,7 @@ protected:
 private:
     AudioRing *m_source;
     QAtomicInt m_stop;
+    QAtomicInt m_reroute; // set by the route watcher
     QString m_error;
 };
 

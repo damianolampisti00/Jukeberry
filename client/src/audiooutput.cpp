@@ -8,7 +8,6 @@
 #include <sys/asoundlib.h>
 #include <audio/audio_manager_routing.h>
 #include <audio/audio_manager_event.h>
-#include <sys/select.h>
 #include <errno.h>
 
 namespace {
@@ -91,19 +90,54 @@ AudioOutput::AudioOutput(AudioRing *source, QObject *parent) :
 {
 }
 
+// Waits for routing changes (a Bluetooth device or a headset connected or
+// removed) on its own thread: audio_manager_get_event() blocks, and the event
+// fd reads as ready even with nothing queued, so it can't be polled from the
+// playback loop. A stream opened on the "preferred" output stays where it
+// was, so the output thread reopens the device on the new route.
+class RouteWatcher : public QThread
+{
+public:
+    explicit RouteWatcher(QAtomicInt *flag) : m_flag(flag) {}
+protected:
+    void run()
+    {
+        audio_manager_event_context_t *events = 0;
+        if (audio_manager_get_event_context(&events) != EOK || !events) return;
+        if (audio_manager_add_routing_change_event(events) != EOK) {
+            audio_manager_release_event_context(&events);
+            return;
+        }
+        int last = -1;
+        for (;;) {
+            audio_manager_event_type_t type;
+            void *params = 0;
+            if (audio_manager_get_event(events, &type, &params) != EOK) {
+                msleep(500);
+                continue;
+            }
+            if (type != AUDIO_ROUTING_CHANGE || !params) continue;
+            const audio_manager_routing_change_t *change =
+                    static_cast<audio_manager_routing_change_t *>(params);
+            const int now = change->dev_now;
+            if (now == last) continue;
+            last = now;
+            qDebug() << "[Jukeberry:audio] output device now" << now;
+            *m_flag = 1;
+        }
+    }
+private:
+    QAtomicInt *m_flag;
+};
+
 void AudioOutput::run()
 {
     const int startBytes = kStartMs * kBytesPerMs;
     const int maxBytes = kMaxMs * kBytesPerMs;
-    // Routing changes (a Bluetooth device or a headset connected/removed): a
-    // stream opened on the "preferred" output stays where it was, so the
-    // device is reopened on the new route (what the system's players do).
-    audio_manager_event_context_t *events = 0;
-    int eventFd = -1;
-    if (audio_manager_get_event_context(&events) == EOK && events
-            && audio_manager_add_routing_change_event(events) == EOK) {
-        audio_manager_get_event_fd(events, &eventFd);
-    }
+    // Lives as long as the app; it never returns from its wait, so it isn't
+    // stopped or deleted.
+    RouteWatcher *watcher = new RouteWatcher(&m_reroute);
+    watcher->start();
     while (!m_stop) {
         // Idle: the device stays closed until a start buffer has arrived.
         if (!m_source->waitFor(startBytes, 200)) continue;
@@ -118,6 +152,7 @@ void AudioOutput::run()
             continue;
         }
         deviceOpen = 1;
+        m_reroute = 0; // this open already uses the current route
         emit audioHandleChanged(audioman);
         QByteArray buffer(frag, 0);
         bool prebuffering = false;
@@ -126,19 +161,9 @@ void AudioOutput::run()
 
         bool rerouted = false;
         while (!m_stop) {
-            if (eventFd >= 0) {
-                fd_set fds;
-                FD_ZERO(&fds);
-                FD_SET(eventFd, &fds);
-                struct timeval none = { 0, 0 };
-                if (select(eventFd + 1, &fds, 0, 0, &none) > 0) {
-                    audio_manager_event_type_t type;
-                    void *params = 0;
-                    if (audio_manager_get_event(events, &type, &params) == EOK && type == AUDIO_ROUTING_CHANGE) {
-                        rerouted = true;
-                        break; // reopen on the new route, the ring keeps its audio
-                    }
-                }
+            if (m_reroute) {
+                rerouted = true;
+                break; // reopen on the new route, the ring keeps its audio
             }
             if (prebuffering) {
                 // Ran dry (pause, end of the queue, a slow network): wait for
@@ -176,5 +201,4 @@ void AudioOutput::run()
             emit this->rerouted();
         }
     }
-    if (events) audio_manager_release_event_context(&events);
 }
