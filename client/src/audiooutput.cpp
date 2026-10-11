@@ -41,7 +41,6 @@ snd_pcm_t *openDevice(unsigned int *audioman, int *fragBytes, QString *error)
     if (path.endsWith("a2dpp")) {
         rc = audio_manager_snd_pcm_open_name(AUDIO_TYPE_MULTIMEDIA, &pcm, audioman, path.data(),
                                              SND_PCM_OPEN_PLAYBACK);
-        qDebug() << "[Jukeberry:audio] open" << path << rc;
     } else {
         rc = audio_manager_snd_pcm_open_preferred(AUDIO_TYPE_MULTIMEDIA, &pcm, audioman, &card, &device,
                                                   SND_PCM_OPEN_PLAYBACK);

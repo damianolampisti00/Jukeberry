@@ -156,7 +156,6 @@ private:
         QString key;
     };
 
-    void trace(const QByteArray &what);
     qint64 send(const QString &cmd, const QVariantMap &args = QVariantMap(), Purpose purpose = None,
                 const QString &key = QString());
     void connectNow();

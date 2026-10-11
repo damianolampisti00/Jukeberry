@@ -30,6 +30,8 @@ Tested on a BlackBerry Q5 (BB10 10.3.3) with the server on Linux.
 - Search: songs, albums, artists, playlists.
 - Keeps playing in the background and with the screen locked; lock-screen and headset
   controls; an Active Frame with the cover.
+- Bluetooth headphones and speakers: the sound follows the output when a device connects
+  or disconnects.
 - The phone is a Spotify Connect device: you can also start music from Spotify on a
   computer or another phone and hear it on the BlackBerry.
 - English and Italian UI.

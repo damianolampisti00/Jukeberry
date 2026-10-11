@@ -1,7 +1,6 @@
 #include "player.hpp"
 
 #include <QCryptographicHash>
-#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -296,7 +295,6 @@ void Player::onEvent(const QString &type, const QVariantMap &data)
     } else if (type == "playing") {
         setPlaying(true);
     } else if (type == "paused" || type == "stopped") {
-        trace("event " + type.toUtf8() + " " + data.value("play_origin").toString().toUtf8());
         setPlaying(false);
     } else if (type == "seek") {
         setPositionBase(data.value("position").toLongLong());
@@ -405,7 +403,6 @@ QString Player::formatTime(int ms) const
 void Player::playPause()
 {
     if (!hasTrack()) return;
-    trace(m_playing ? "pause" : "resume");
     send(m_playing ? "pause" : "resume");
     setPlaying(!m_playing); // at once; the event confirms it
 }
@@ -681,18 +678,6 @@ void Player::applyArt(const QString &url, const QString &file)
 
 // --- lock screen / headset -------------------------------------------------
 
-// Pauses nobody asked for: a short log of who pauses and resumes, in the
-// app's data folder (trace.log, the last ~64 KB), to read over SSH.
-void Player::trace(const QByteArray &what)
-{
-    QFile f(QDir::homePath() + "/trace.log");
-    if (f.size() > 64 * 1024) f.remove();
-    if (!f.open(QIODevice::Append)) return;
-    f.write(QDateTime::currentDateTime().toString("MM-dd hh:mm:ss.zzz ").toUtf8() + what
-            + (m_playing ? " (playing)" : " (paused)")
-            + (m_np->isAcquired() ? " np" : "") + "\n");
-}
-
 void Player::updateNowPlaying()
 {
     if (!hasTrack()) return;
@@ -715,19 +700,16 @@ void Player::onAudioHandle(unsigned int handle)
 
 void Player::onNpPlay()
 {
-    trace("np play");
     if (!m_playing) playPause();
 }
 
 void Player::onNpPause()
 {
-    trace("np pause");
     if (m_playing) playPause();
 }
 
 void Player::onNpRevoked()
 {
-    trace("np revoked");
     // Not a reason to pause: the service is revoked also when our own stream
     // starts a track (every song paused itself). Calls and other players
     // already silence the stream through the audio manager; the controls are
