@@ -210,6 +210,12 @@ func (g *gateway) onPlayerEvent(ev playerEvent) {
 	if ev.Type == "seek" {
 		g.audio.flush.Store(true)
 	}
+	switch ev.Type {
+	case "paused", "playing", "stopped", "not_playing", "inactive", "active":
+		// Who stops the music: a "pause" command from a phone is logged
+		// with it; a pause without one came from Spotify (another device).
+		log.Printf("librespot: %s %s", ev.Type, ev.Data)
+	}
 	b, err := json.Marshal(struct {
 		Event string          `json:"event"`
 		Data  json.RawMessage `json:"data,omitempty"`
@@ -319,6 +325,7 @@ func (g *gateway) run(ctx context.Context, c *client, cmd *command) (json.RawMes
 		}
 		return call("POST", "/player/play", body, true)
 	case "pause", "resume", "playpause", "stop":
+		log.Printf("ws %s: %s", c.ip, cmd.Cmd)
 		return call("POST", "/player/"+cmd.Cmd, nil, false)
 	case "prev":
 		return call("POST", "/player/prev", nil, true)

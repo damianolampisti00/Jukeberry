@@ -38,6 +38,13 @@ public:
     QAtomicInt dropped;
     QAtomicInt deviceOpen;
 
+signals:
+    // The audio manager handle of the stream just opened (0: closed), for
+    // NowPlayingConnection::setAudioManagerHandle. Emitted from this thread.
+    void audioHandleChanged(unsigned int handle);
+    // The output was reopened because the route changed (Bluetooth, headset).
+    void rerouted();
+
 protected:
     void run();
 

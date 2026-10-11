@@ -7,6 +7,9 @@
 #include <string.h>
 #include <sys/asoundlib.h>
 #include <audio/audio_manager_routing.h>
+#include <audio/audio_manager_event.h>
+#include <sys/select.h>
+#include <errno.h>
 
 namespace {
 
@@ -92,6 +95,15 @@ void AudioOutput::run()
 {
     const int startBytes = kStartMs * kBytesPerMs;
     const int maxBytes = kMaxMs * kBytesPerMs;
+    // Routing changes (a Bluetooth device or a headset connected/removed): a
+    // stream opened on the "preferred" output stays where it was, so the
+    // device is reopened on the new route (what the system's players do).
+    audio_manager_event_context_t *events = 0;
+    int eventFd = -1;
+    if (audio_manager_get_event_context(&events) == EOK && events
+            && audio_manager_add_routing_change_event(events) == EOK) {
+        audio_manager_get_event_fd(events, &eventFd);
+    }
     while (!m_stop) {
         // Idle: the device stays closed until a start buffer has arrived.
         if (!m_source->waitFor(startBytes, 200)) continue;
@@ -106,12 +118,28 @@ void AudioOutput::run()
             continue;
         }
         deviceOpen = 1;
+        emit audioHandleChanged(audioman);
         QByteArray buffer(frag, 0);
         bool prebuffering = false;
         QElapsedTimer starved; // since the ring ran dry
         starved.invalidate();
 
+        bool rerouted = false;
         while (!m_stop) {
+            if (eventFd >= 0) {
+                fd_set fds;
+                FD_ZERO(&fds);
+                FD_SET(eventFd, &fds);
+                struct timeval none = { 0, 0 };
+                if (select(eventFd + 1, &fds, 0, 0, &none) > 0) {
+                    audio_manager_event_type_t type;
+                    void *params = 0;
+                    if (audio_manager_get_event(events, &type, &params) == EOK && type == AUDIO_ROUTING_CHANGE) {
+                        rerouted = true;
+                        break; // reopen on the new route, the ring keeps its audio
+                    }
+                }
+            }
             if (prebuffering) {
                 // Ran dry (pause, end of the queue, a slow network): wait for
                 // a start buffer again, without writing; the device stops by
@@ -142,5 +170,11 @@ void AudioOutput::run()
         }
         closeDevice(pcm, audioman);
         deviceOpen = 0;
+        emit audioHandleChanged(0);
+        if (rerouted) {
+            qDebug() << "[Jukeberry:audio] route changed, reopening";
+            emit this->rerouted();
+        }
     }
+    if (events) audio_manager_release_event_context(&events);
 }

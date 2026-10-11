@@ -1,6 +1,7 @@
 #include "player.hpp"
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -103,6 +104,9 @@ Player::Player(QObject *parent) :
     connect(m_np, SIGNAL(next()), this, SLOT(next()));
     connect(m_np, SIGNAL(previous()), this, SLOT(previous()));
     connect(m_np, SIGNAL(revoked()), this, SLOT(onNpRevoked()));
+    // Tie the controls to our audio stream, so the system knows which output
+    // is ours (calls, Bluetooth, other players) instead of guessing.
+    connect(m_audio, SIGNAL(audioHandleChanged(unsigned int)), this, SLOT(onAudioHandle(unsigned int)));
 
     if (configured()) connectNow();
     else setMessage(tr("Enter your Jukeberry server in Settings"));
@@ -292,6 +296,7 @@ void Player::onEvent(const QString &type, const QVariantMap &data)
     } else if (type == "playing") {
         setPlaying(true);
     } else if (type == "paused" || type == "stopped") {
+        trace("event " + type.toUtf8() + " " + data.value("play_origin").toString().toUtf8());
         setPlaying(false);
     } else if (type == "seek") {
         setPositionBase(data.value("position").toLongLong());
@@ -400,6 +405,7 @@ QString Player::formatTime(int ms) const
 void Player::playPause()
 {
     if (!hasTrack()) return;
+    trace(m_playing ? "pause" : "resume");
     send(m_playing ? "pause" : "resume");
     setPlaying(!m_playing); // at once; the event confirms it
 }
@@ -675,6 +681,18 @@ void Player::applyArt(const QString &url, const QString &file)
 
 // --- lock screen / headset -------------------------------------------------
 
+// Pauses nobody asked for: a short log of who pauses and resumes, in the
+// app's data folder (trace.log, the last ~64 KB), to read over SSH.
+void Player::trace(const QByteArray &what)
+{
+    QFile f(QDir::homePath() + "/trace.log");
+    if (f.size() > 64 * 1024) f.remove();
+    if (!f.open(QIODevice::Append)) return;
+    f.write(QDateTime::currentDateTime().toString("MM-dd hh:mm:ss.zzz ").toUtf8() + what
+            + (m_playing ? " (playing)" : " (paused)")
+            + (m_np->isAcquired() ? " np" : "") + "\n");
+}
+
 void Player::updateNowPlaying()
 {
     if (!hasTrack()) return;
@@ -690,18 +708,26 @@ void Player::updateNowPlaying()
     m_np->setMediaState(m_playing ? bb::multimedia::MediaState::Started : bb::multimedia::MediaState::Paused);
 }
 
+void Player::onAudioHandle(unsigned int handle)
+{
+    if (handle) m_np->setAudioManagerHandle(handle);
+}
+
 void Player::onNpPlay()
 {
+    trace("np play");
     if (!m_playing) playPause();
 }
 
 void Player::onNpPause()
 {
+    trace("np pause");
     if (m_playing) playPause();
 }
 
 void Player::onNpRevoked()
 {
+    trace("np revoked");
     // Another app took the media controls (a video, another player): pause.
     if (m_playing) playPause();
 }

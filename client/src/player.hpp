@@ -146,6 +146,7 @@ private slots:
     void onNpPlay();
     void onNpPause();
     void onNpRevoked();
+    void onAudioHandle(unsigned int handle);
 
 private:
     enum Purpose { None, Status, Playlists, Context, Search, Liked, Art, Queue };
@@ -155,6 +156,7 @@ private:
         QString key;
     };
 
+    void trace(const QByteArray &what);
     qint64 send(const QString &cmd, const QVariantMap &args = QVariantMap(), Purpose purpose = None,
                 const QString &key = QString());
     void connectNow();
