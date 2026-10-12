@@ -118,20 +118,20 @@ TabbedPane {
                                             ActionItem {
                                                 title: qsTr("Move up")
                                                 imageSource: "asset:///images/ic_move_up.png"
-                                                enabled: queueItem.ListItemData.queued
-                                                onTriggered: queueItem.ListItem.view.move(queueItem.ListItemData.uid, -1)
+                                                enabled: ListItemData.queued
+                                                onTriggered: queueItem.ListItem.view.move(ListItemData.uid, -1)
                                             }
                                             ActionItem {
                                                 title: qsTr("Move down")
                                                 imageSource: "asset:///images/ic_move_down.png"
-                                                enabled: queueItem.ListItemData.queued
-                                                onTriggered: queueItem.ListItem.view.move(queueItem.ListItemData.uid, 1)
+                                                enabled: ListItemData.queued
+                                                onTriggered: queueItem.ListItem.view.move(ListItemData.uid, 1)
                                             }
                                             ActionItem {
                                                 title: qsTr("Remove from queue")
                                                 imageSource: "asset:///images/ic_queue_remove.png"
-                                                enabled: queueItem.ListItemData.queued
-                                                onTriggered: queueItem.ListItem.view.remove(queueItem.ListItemData.uid)
+                                                enabled: ListItemData.queued
+                                                onTriggered: queueItem.ListItem.view.remove(ListItemData.uid)
                                             }
                                         }
                                     ]
@@ -263,19 +263,19 @@ TabbedPane {
                                             ActionItem {
                                                 title: qsTr("Add to queue")
                                                 imageSource: "asset:///images/ic_queue_add.png"
-                                                onTriggered: trackItem.ListItem.view.addToQueue(trackItem.ListItemData.uri)
+                                                onTriggered: trackItem.ListItem.view.addToQueue(ListItemData.uri)
                                             }
                                             ActionItem {
-                                                title: trackItem.ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
-                                                imageSource: trackItem.ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
-                                                enabled: trackItem.ListItemData.kind == "track"
-                                                onTriggered: trackItem.ListItem.view.setLiked(trackItem.ListItemData.uri, ! trackItem.ListItemData.liked)
+                                                title: ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
+                                                imageSource: ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
+                                                enabled: ListItemData.kind == "track"
+                                                onTriggered: trackItem.ListItem.view.setLiked(ListItemData.uri, ! ListItemData.liked)
                                             }
                                             ActionItem {
                                                 title: qsTr("Add to playlist")
                                                 imageSource: "asset:///images/ic_playlist_add.png"
-                                                enabled: trackItem.ListItemData.kind == "track"
-                                                onTriggered: trackItem.ListItem.view.addToPlaylist(trackItem.ListItemData.uri)
+                                                enabled: ListItemData.kind == "track"
+                                                onTriggered: trackItem.ListItem.view.addToPlaylist(ListItemData.uri)
                                             }
                                         }
                                     ]
@@ -607,20 +607,20 @@ TabbedPane {
                                                 ActionItem {
                                                     title: qsTr("Add to queue")
                                                     imageSource: "asset:///images/ic_queue_add.png"
-                                                    enabled: resultItem.ListItemData.kind == "track"
-                                                    onTriggered: resultItem.ListItem.view.addToQueue(resultItem.ListItemData.uri)
+                                                    enabled: ListItemData.kind == "track"
+                                                    onTriggered: resultItem.ListItem.view.addToQueue(ListItemData.uri)
                                                 }
                                                 ActionItem {
-                                                    title: resultItem.ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
-                                                    imageSource: resultItem.ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
-                                                    enabled: resultItem.ListItemData.kind == "track"
-                                                    onTriggered: resultItem.ListItem.view.setLiked(resultItem.ListItemData.uri, ! resultItem.ListItemData.liked)
+                                                    title: ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
+                                                    imageSource: ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
+                                                    enabled: ListItemData.kind == "track"
+                                                    onTriggered: resultItem.ListItem.view.setLiked(ListItemData.uri, ! ListItemData.liked)
                                                 }
                                                 ActionItem {
                                                     title: qsTr("Add to playlist")
                                                     imageSource: "asset:///images/ic_playlist_add.png"
-                                                    enabled: resultItem.ListItemData.kind == "track"
-                                                    onTriggered: resultItem.ListItem.view.addToPlaylist(resultItem.ListItemData.uri)
+                                                    enabled: ListItemData.kind == "track"
+                                                    onTriggered: resultItem.ListItem.view.addToPlaylist(ListItemData.uri)
                                                 }
                                             }
                                         ]
