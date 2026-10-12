@@ -106,6 +106,7 @@ TabbedPane {
                         listItemComponents: [
                             ListItemComponent {
                                 StandardListItem {
+                                    id: queueItem
                                     title: ListItemData.name
                                     description: ListItemData.subtitle
                                     status: ListItemData.queued ? qsTr("In queue") : ListItemData.duration
@@ -117,20 +118,20 @@ TabbedPane {
                                             ActionItem {
                                                 title: qsTr("Move up")
                                                 imageSource: "asset:///images/ic_move_up.png"
-                                                enabled: ListItemData.queued
-                                                onTriggered: ListItem.view.move(ListItemData.uid, -1)
+                                                enabled: queueItem.ListItemData.queued
+                                                onTriggered: queueItem.ListItem.view.move(queueItem.ListItemData.uid, -1)
                                             }
                                             ActionItem {
                                                 title: qsTr("Move down")
                                                 imageSource: "asset:///images/ic_move_down.png"
-                                                enabled: ListItemData.queued
-                                                onTriggered: ListItem.view.move(ListItemData.uid, 1)
+                                                enabled: queueItem.ListItemData.queued
+                                                onTriggered: queueItem.ListItem.view.move(queueItem.ListItemData.uid, 1)
                                             }
                                             ActionItem {
                                                 title: qsTr("Remove from queue")
                                                 imageSource: "asset:///images/ic_queue_remove.png"
-                                                enabled: ListItemData.queued
-                                                onTriggered: ListItem.view.remove(ListItemData.uid)
+                                                enabled: queueItem.ListItemData.queued
+                                                onTriggered: queueItem.ListItem.view.remove(queueItem.ListItemData.uid)
                                             }
                                         }
                                     ]
@@ -251,6 +252,7 @@ TabbedPane {
                         listItemComponents: [
                             ListItemComponent {
                                 StandardListItem {
+                                    id: trackItem
                                     title: ListItemData.name
                                     description: ListItemData.subtitle
                                     status: ListItemData.duration
@@ -261,19 +263,19 @@ TabbedPane {
                                             ActionItem {
                                                 title: qsTr("Add to queue")
                                                 imageSource: "asset:///images/ic_queue_add.png"
-                                                onTriggered: ListItem.view.addToQueue(ListItemData.uri)
+                                                onTriggered: trackItem.ListItem.view.addToQueue(trackItem.ListItemData.uri)
                                             }
                                             ActionItem {
-                                                title: ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
-                                                imageSource: ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
-                                                enabled: ListItemData.kind == "track"
-                                                onTriggered: ListItem.view.setLiked(ListItemData.uri, ! ListItemData.liked)
+                                                title: trackItem.ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
+                                                imageSource: trackItem.ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
+                                                enabled: trackItem.ListItemData.kind == "track"
+                                                onTriggered: trackItem.ListItem.view.setLiked(trackItem.ListItemData.uri, ! trackItem.ListItemData.liked)
                                             }
                                             ActionItem {
                                                 title: qsTr("Add to playlist")
                                                 imageSource: "asset:///images/ic_playlist_add.png"
-                                                enabled: ListItemData.kind == "track"
-                                                onTriggered: ListItem.view.addToPlaylist(ListItemData.uri)
+                                                enabled: trackItem.ListItemData.kind == "track"
+                                                onTriggered: trackItem.ListItem.view.addToPlaylist(trackItem.ListItemData.uri)
                                             }
                                         }
                                     ]
@@ -595,6 +597,7 @@ TabbedPane {
                                 ListItemComponent {
                                     type: "item"
                                     StandardListItem {
+                                        id: resultItem
                                         title: ListItemData.name
                                         description: ListItemData.subtitle
                                         status: ListItemData.duration ? ListItemData.duration : ""
@@ -604,20 +607,20 @@ TabbedPane {
                                                 ActionItem {
                                                     title: qsTr("Add to queue")
                                                     imageSource: "asset:///images/ic_queue_add.png"
-                                                    enabled: ListItemData.kind == "track"
-                                                    onTriggered: ListItem.view.addToQueue(ListItemData.uri)
+                                                    enabled: resultItem.ListItemData.kind == "track"
+                                                    onTriggered: resultItem.ListItem.view.addToQueue(resultItem.ListItemData.uri)
                                                 }
                                                 ActionItem {
-                                                    title: ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
-                                                    imageSource: ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
-                                                    enabled: ListItemData.kind == "track"
-                                                    onTriggered: ListItem.view.setLiked(ListItemData.uri, ! ListItemData.liked)
+                                                    title: resultItem.ListItemData.liked ? qsTr("Remove from Liked Songs") : qsTr("Add to Liked Songs")
+                                                    imageSource: resultItem.ListItemData.liked ? "asset:///images/ic_liked.png" : "asset:///images/ic_like.png"
+                                                    enabled: resultItem.ListItemData.kind == "track"
+                                                    onTriggered: resultItem.ListItem.view.setLiked(resultItem.ListItemData.uri, ! resultItem.ListItemData.liked)
                                                 }
                                                 ActionItem {
                                                     title: qsTr("Add to playlist")
                                                     imageSource: "asset:///images/ic_playlist_add.png"
-                                                    enabled: ListItemData.kind == "track"
-                                                    onTriggered: ListItem.view.addToPlaylist(ListItemData.uri)
+                                                    enabled: resultItem.ListItemData.kind == "track"
+                                                    onTriggered: resultItem.ListItem.view.addToPlaylist(resultItem.ListItemData.uri)
                                                 }
                                             }
                                         ]
