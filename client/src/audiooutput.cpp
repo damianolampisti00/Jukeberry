@@ -1,3 +1,4 @@
+#include <limits.h>
 #include "audiooutput.hpp"
 
 #include <QByteArray>
@@ -171,7 +172,9 @@ void AudioOutput::run()
     watcher->start();
     while (!m_stop) {
         // Idle: the device stays closed until a start buffer has arrived.
-        if (!m_source->waitFor(startBytes, 200)) continue;
+        // No timeout: requestStop() wakes it. Polling every 200 ms woke the
+        // phone 5 times a second for as long as the app was open.
+        if (!m_source->waitFor(startBytes, ULONG_MAX)) continue;
 
         unsigned int audioman = 0;
         int frag = 0;

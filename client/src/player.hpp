@@ -147,6 +147,7 @@ signals:
     // To the link thread.
     void linkConnect(const QUrl &url, const QByteArray &token);
     void linkSend(const QByteArray &utf8);
+    void linkDisconnect();
 
 private slots:
     void onOpened();
@@ -160,6 +161,11 @@ private slots:
     void onNpPause();
     void onNpRevoked();
     void onAudioHandle(unsigned int handle);
+    // Minimized/covered and not playing: the connection is closed after a
+    // while; back in full screen (or play from the lock screen) it reopens.
+    void onAppBackground();
+    void onAppForeground();
+    void onBackgroundIdle();
 
 private:
     enum Purpose { None, Status, Playlists, Context, Search, Liked, Art, Queue, LikedList, PlaylistAdd };
@@ -213,6 +219,10 @@ private:
     bool m_playing, m_liked, m_shuffle;
     int m_repeat;
     QTimer m_tick;
+    QTimer m_bgTimer;
+    bool m_background;
+    bool m_bgClosed;     // the connection was closed on purpose in the background
+    bool m_resumeOnOpen; // play pressed (lock screen, headset) while it was closed
 
     bb::cascades::ArrayDataModel *m_playlists, *m_tracks, *m_results, *m_queue;
     bool m_queueLoading, m_queueVisible;

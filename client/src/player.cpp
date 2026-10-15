@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QSettings>
 
+#include <bb/cascades/Application>
 #include <bb/data/JsonDataAccess>
 #include <bb/multimedia/MediaState>
 #include <bb/multimedia/MetaData>
@@ -14,6 +15,11 @@
 
 #include "audiooutput.hpp"
 #include "link.hpp"
+
+namespace {
+// Paused in the background this long: the connection is closed.
+const int kBackgroundCloseMs = 30000;
+}
 
 using namespace bb::cascades;
 using bb::multimedia::NowPlayingConnection;
@@ -58,7 +64,10 @@ Player::Player(QObject *parent) :
         m_tracksLoading(false), m_playlistsLoading(false), m_searching(false),
         m_queueLoading(false), m_queueVisible(false),
         m_contextPolls(0),
-        m_np(0)
+        m_np(0),
+        m_background(false),
+        m_bgClosed(false),
+        m_resumeOnOpen(false)
 {
     qRegisterMetaType<QUrl>("QUrl");
 
@@ -74,9 +83,15 @@ Player::Player(QObject *parent) :
     m_results = new ArrayDataModel(this);
     m_queue = new ArrayDataModel(this);
 
+    // The position display: only while playing (it woke the phone twice a
+    // second all the time the app was open).
     m_tick.setInterval(500);
     connect(&m_tick, SIGNAL(timeout()), this, SLOT(onTick()));
-    m_tick.start();
+    m_bgTimer.setSingleShot(true);
+    connect(&m_bgTimer, SIGNAL(timeout()), this, SLOT(onBackgroundIdle()));
+    connect(bb::cascades::Application::instance(), SIGNAL(thumbnail()), this, SLOT(onAppBackground()));
+    connect(bb::cascades::Application::instance(), SIGNAL(invisible()), this, SLOT(onAppBackground()));
+    connect(bb::cascades::Application::instance(), SIGNAL(fullscreen()), this, SLOT(onAppForeground()));
     m_contextTimer.setSingleShot(true);
     connect(&m_contextTimer, SIGNAL(timeout()), this, SLOT(pollContext()));
 
@@ -85,6 +100,7 @@ Player::Player(QObject *parent) :
     m_link->moveToThread(&m_linkThread);
     connect(this, SIGNAL(linkConnect(QUrl, QByteArray)), m_link, SLOT(connectTo(QUrl, QByteArray)));
     connect(this, SIGNAL(linkSend(QByteArray)), m_link, SLOT(sendText(QByteArray)));
+    connect(this, SIGNAL(linkDisconnect()), m_link, SLOT(disconnectNow()));
     connect(m_link, SIGNAL(opened()), this, SLOT(onOpened()));
     connect(m_link, SIGNAL(closed(QString, bool, bool)), this, SLOT(onClosed(QString, bool, bool)));
     connect(m_link, SIGNAL(textReceived(QByteArray)), this, SLOT(onText(QByteArray)));
@@ -155,6 +171,11 @@ void Player::onOpened()
     QVariantMap audio;
     audio["on"] = true;
     send("audio", audio);
+    if (m_resumeOnOpen) { // play was pressed while the connection was closed
+        m_resumeOnOpen = false;
+        send("resume");
+        setPlaying(true);
+    }
     if (m_playlists->isEmpty()) loadPlaylists();
 }
 
@@ -166,7 +187,8 @@ void Player::onClosed(const QString &reason, bool authFailed, bool lockedOut)
     if (was) emit connectedChanged();
     m_pending.clear();
     m_artInFlight.clear();
-    if (authFailed) setMessage(tr("Invalid token: check Settings"));
+    if (m_bgClosed) setMessage(QString()); // closed on purpose (onBackgroundIdle)
+    else if (authFailed) setMessage(tr("Invalid token: check Settings"));
     else if (lockedOut) setMessage(tr("Too many wrong tokens from this network: the server blocks it for 15 minutes"));
     else setMessage(tr("Connection lost, retrying..."));
 }
@@ -396,9 +418,44 @@ void Player::setPlaying(bool playing)
         m_posBase += m_posClock.elapsed();
     }
     m_playing = playing;
+    if (playing) m_tick.start();
+    else m_tick.stop();
+    // Paused in the background: the connection goes after a while too.
+    if (playing) m_bgTimer.stop();
+    else if (m_background) m_bgTimer.start(kBackgroundCloseMs);
     emit playStateChanged();
     emit positionChanged();
     updateNowPlaying();
+}
+
+// Minimized or covered while nothing plays: after kBackgroundCloseMs the
+// connection to the server is closed (no keepalives, no events: the radio
+// can sleep). Playing, it stays (the audio comes over it). Back in full
+// screen, or play pressed on the lock screen or a headset, it reopens.
+void Player::onAppBackground()
+{
+    if (m_background) return;
+    m_background = true;
+    if (!m_playing) m_bgTimer.start(kBackgroundCloseMs);
+}
+
+void Player::onBackgroundIdle()
+{
+    if (!m_background || m_playing || m_bgClosed || !m_connected) return;
+    qDebug() << "[Jukeberry] in the background and paused: closing the connection";
+    m_bgClosed = true;
+    emit linkDisconnect();
+}
+
+void Player::onAppForeground()
+{
+    if (!m_background) return;
+    m_background = false;
+    m_bgTimer.stop();
+    if (m_bgClosed) {
+        m_bgClosed = false;
+        if (configured()) connectNow();
+    }
 }
 
 void Player::onTick()
@@ -852,6 +909,12 @@ void Player::onAudioHandle(unsigned int handle)
 
 void Player::onNpPlay()
 {
+    if (m_bgClosed) { // closed in the background: reopen, then resume
+        m_bgClosed = false;
+        m_resumeOnOpen = true;
+        if (configured()) connectNow();
+        return;
+    }
     if (!m_playing) playPause();
 }
 
