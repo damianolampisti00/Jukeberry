@@ -146,23 +146,26 @@ func (h *audioHub) ack(c *client, seq uint32) {
 	h.acks[c] = ackInfo{seq, time.Now()}
 }
 
-// played: the furthest frame the slowest listening phone has played, if
-// any of them acked recently (then the margin paces the reading).
+// played: how far the phone that acked last has played, if one acked
+// recently (then the margin paces the reading). The latest ack, not the
+// slowest phone's: after a switch from Wi-Fi to mobile data the dead
+// connection stays open for minutes (the tunnel keeps it), and its frozen
+// ack held the reading back until the phone's margin ran dry.
 func (h *audioHub) played() (uint32, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var min uint32
+	var last ackInfo
 	ok := false
 	for c, a := range h.acks {
 		if _, sub := h.subs[c]; !sub || time.Since(a.at) > ackFresh {
 			continue
 		}
-		if !ok || int32(a.seq-min) < 0 {
-			min = a.seq
+		if !ok || a.at.After(last.at) {
+			last = a
 		}
 		ok = true
 	}
-	return min, ok
+	return last.seq, ok
 }
 
 // trackStarted: go-librespot moved to a new track (its "metadata" event).
