@@ -149,6 +149,7 @@ void Link::onBinary(const QByteArray &data)
         decodeLoss(qMin(lost, kMaxConcealFrames));
     }
     m_lastSeq = word;
+    nextFrame = int(word + 1);
     framesReceived.ref();
 
     const int n = opus_decode(m_decoder, p + 8, data.size() - 8,

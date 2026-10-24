@@ -29,6 +29,10 @@ public:
 
     // Stats (any thread).
     QAtomicInt framesReceived, framesLost, discontinuities;
+    // The first frame we lack (newest received + 1), 0 before any (any
+    // thread): "audio" {from} after a reconnect gets what went to the dead
+    // connection.
+    QAtomicInt nextFrame;
 
 public slots:
     void connectTo(const QUrl &url, const QByteArray &token);

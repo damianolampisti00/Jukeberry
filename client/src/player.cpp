@@ -180,6 +180,8 @@ void Player::onOpened()
     send("status", QVariantMap(), Status);
     QVariantMap audio;
     audio["on"] = true;
+    const int next = m_link->nextFrame; // a reconnect: what we missed is sent again
+    if (next > 0) audio["from"] = uint(next);
     send("audio", audio);
     emit linkPlaying(m_playing); // an ack at once: the gateway keeps our queued audio
     if (m_resumeOnOpen) { // play was pressed while the connection was closed

@@ -77,7 +77,14 @@ type audioHub struct {
 	// acking) a command waited until we read again (a pause took 27 s). While
 	// a command is in flight the reading goes on.
 	commands atomic.Int32
+
+	// The last frames sent (under mu), so a phone that reconnects (Wi-Fi
+	// gone for a few seconds, a switch to mobile data) gets what went to its
+	// dead connection: "audio" {on, from}.
+	history [][]byte
 }
+
+const historyFrames = lead + 500 // 40 s, ~800 KB of Opus
 
 // command: around every go-librespot call (see commands).
 func (h *audioHub) command() func() {
@@ -103,15 +110,31 @@ func newAudioHub() *audioHub {
 	return &audioHub{subs: map[*client]struct{}{}, acks: map[*client]ackInfo{}}
 }
 
-func (h *audioHub) subscribe(c *client, on bool) {
+func (h *audioHub) subscribe(c *client, on bool) { h.subscribeFrom(c, on, nil) }
+
+// subscribeFrom: with from, the frames from that one on still in the
+// history go first (under mu: nothing is lost or sent twice in between).
+func (h *audioHub) subscribeFrom(c *client, on bool, from *uint32) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if on {
-		h.subs[c] = struct{}{}
-	} else {
+	if !on {
 		delete(h.subs, c)
 		delete(h.acks, c)
+		return
 	}
+	if _, already := h.subs[c]; !already && from != nil {
+		n := 0
+		for _, f := range h.history {
+			if int32(binary.LittleEndian.Uint32(f[4:])-*from) >= 0 {
+				c.sendAudio(f)
+				n++
+			}
+		}
+		if n > 0 {
+			log.Printf("ws %s: %d frames sent again from %d", c.ip, n, *from)
+		}
+	}
+	h.subs[c] = struct{}{}
 }
 
 // ack: phone c has played up to frame seq. Kept even before its "audio on"
@@ -192,6 +215,10 @@ func (h *audioHub) paced() bool {
 func (h *audioHub) broadcast(frame []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.history) >= historyFrames {
+		h.history = h.history[1:] // (append reallocates now and then: bounded)
+	}
+	h.history = append(h.history, frame)
 	for c := range h.subs {
 		c.sendAudio(frame)
 	}

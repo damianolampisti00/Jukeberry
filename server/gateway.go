@@ -278,6 +278,7 @@ type command struct {
 	Types     string   `json:"types"`
 	URL       string   `json:"url"`
 	Seq       *uint32  `json:"seq"`
+	From      *uint32  `json:"from"`
 }
 
 type reply struct {
@@ -335,9 +336,9 @@ func (g *gateway) run(ctx context.Context, c *client, cmd *command) (json.RawMes
 		return json.RawMessage(`"pong"`), nil
 	case "status":
 		return call("GET", "/status", nil, false)
-	case "audio": // {on}: stream this phone the audio, or stop
+	case "audio": // {on, from?}: stream this phone the audio (from: the first frame it lacks), or stop
 		on := cmd.On != nil && *cmd.On
-		g.audio.subscribe(c, on)
+		g.audio.subscribeFrom(c, on, cmd.From)
 		log.Printf("ws %s: audio %v", c.ip, on)
 		return nil, nil
 	case "play": // {uri, skip_to_uri?, position?, paused?}
