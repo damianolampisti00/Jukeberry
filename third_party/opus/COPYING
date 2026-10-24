@@ -1,6 +1,3 @@
-libopus (https://opus-codec.org/), prebuilt for armv7 (BlackBerry 10) as
-lib/armv7/libopus.a, with its public headers in include/opus.
-
 Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                     Jean-Marc Valin, Timothy B. Terriberry,
                     CSIRO, Gregory Maxwell, Mark Borgerding,

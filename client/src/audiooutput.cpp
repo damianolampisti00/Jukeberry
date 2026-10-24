@@ -98,17 +98,22 @@ void closeDevice(snd_pcm_t *pcm, unsigned int audioman, bool discard)
     if (audioman) audio_manager_free_handle(audioman);
 }
 
-void recover(snd_pcm_t *pcm, QAtomicInt *underruns)
+// false: the device is not usable any more (e.g. the Bluetooth stack went
+// away under it), so the caller reopens it
+bool recover(snd_pcm_t *pcm, QAtomicInt *underruns)
 {
     snd_pcm_channel_status_t status;
     memset(&status, 0, sizeof status);
     status.channel = SND_PCM_CHANNEL_PLAYBACK;
-    if (snd_pcm_plugin_status(pcm, &status) == 0
-            && (status.status == SND_PCM_STATUS_READY || status.status == SND_PCM_STATUS_UNDERRUN)) {
+    if (snd_pcm_plugin_status(pcm, &status) != 0) return false;
+    if (status.status == SND_PCM_STATUS_READY || status.status == SND_PCM_STATUS_UNDERRUN) {
         if (status.status == SND_PCM_STATUS_UNDERRUN) underruns->ref();
-        snd_pcm_plugin_prepare(pcm, SND_PCM_CHANNEL_PLAYBACK);
+        return snd_pcm_plugin_prepare(pcm, SND_PCM_CHANNEL_PLAYBACK) >= 0;
     }
+    return status.status == SND_PCM_STATUS_RUNNING || status.status == SND_PCM_STATUS_PREPARED;
 }
+
+const int kLostWrites = 5; // failed writes in a row before the device counts as gone
 
 } // namespace
 
@@ -194,6 +199,7 @@ void AudioOutput::run()
         starved.invalidate();
 
         bool rerouted = false;
+        int failed = 0; // writes in a row the device took nothing
         while (!m_stop) {
             if (m_reroute) {
                 rerouted = true;
@@ -225,7 +231,19 @@ void AudioOutput::run()
             const int got = m_source->read(buffer.data(), frag);
             if (got < frag) memset(buffer.data() + got, 0, frag - got);
             const ssize_t n = snd_pcm_plugin_write(pcm, buffer.constData(), frag);
-            if (n < frag) recover(pcm, &underruns);
+            if (n >= frag) {
+                failed = 0;
+            } else if (!recover(pcm, &underruns) && ++failed >= kLostWrites) {
+                // The device went away (the Bluetooth stack restarted, as the
+                // btquiet boot addon does): until 2026-10-24 this loop kept
+                // writing into it and the music stopped for good. Reopen on
+                // whatever the route is now, as for a route change.
+                qDebug() << "[Jukeberry:audio] output device lost, reopening";
+                rerouted = true;
+                break;
+            } else if (failed) {
+                msleep(kFragMs); // no busy loop on a dead device
+            }
         }
         closeDevice(pcm, audioman, rerouted);
         deviceOpen = 0;
