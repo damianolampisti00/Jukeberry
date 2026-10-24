@@ -118,8 +118,30 @@ const int kLostWrites = 5; // failed writes in a row before the device counts as
 } // namespace
 
 AudioOutput::AudioOutput(AudioRing *source, QObject *parent) :
-        QThread(parent), m_source(source), m_stop(0)
+        QThread(parent), m_source(source), m_stop(0), m_hold(0)
 {
+}
+
+void AudioOutput::requestStop()
+{
+    m_stop = 1;
+    m_source->wakeReaders();
+    QMutexLocker lock(&m_holdMutex);
+    m_holdCond.wakeAll();
+}
+
+void AudioOutput::setHold(bool hold)
+{
+    QMutexLocker lock(&m_holdMutex);
+    m_hold = hold ? 1 : 0;
+    m_holdCond.wakeAll();
+}
+
+// Paused: sleep (no polling) until resumed or stopped.
+void AudioOutput::waitWhileHeld()
+{
+    QMutexLocker lock(&m_holdMutex);
+    while (m_hold && !m_stop) m_holdCond.wait(&m_holdMutex);
 }
 
 // Waits for routing changes (a Bluetooth device or a headset connected or
@@ -176,10 +198,13 @@ void AudioOutput::run()
     RouteWatcher *watcher = new RouteWatcher(&m_reroute);
     watcher->start();
     while (!m_stop) {
+        waitWhileHeld();
+        if (m_stop) break;
         // Idle: the device stays closed until a start buffer has arrived.
         // No timeout: requestStop() wakes it. Polling every 200 ms woke the
         // phone 5 times a second for as long as the app was open.
         if (!m_source->waitFor(startBytes, ULONG_MAX)) continue;
+        if (m_hold) continue; // paused meanwhile: the queue waits for the resume
 
         unsigned int audioman = 0;
         int frag = 0;
@@ -205,6 +230,7 @@ void AudioOutput::run()
                 rerouted = true;
                 break; // reopen on the new route, the ring keeps its audio
             }
+            if (m_hold) break; // paused: what is queued stays for the resume
             if (prebuffering) {
                 // Ran dry (pause, end of the queue, a slow network): wait for
                 // a start buffer again, without writing; the device stops by

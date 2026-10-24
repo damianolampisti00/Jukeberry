@@ -148,8 +148,11 @@ signals:
     void linkConnect(const QUrl &url, const QByteArray &token);
     void linkSend(const QByteArray &utf8);
     void linkDisconnect();
+    void linkPlaying(bool playing);
 
 private slots:
+    void onDiscontinuity();
+    void applyPendingTrack();
     void onOpened();
     void onClosed(const QString &reason, bool authFailed, bool lockedOut);
     void onText(const QByteArray &utf8);
@@ -188,6 +191,9 @@ private:
     void onEvent(const QString &type, const QVariantMap &data);
     void setPlaying(bool playing);
     void setPositionBase(qint64 ms);
+    // ms between what the gateway has sent and what is audible (our queue)
+    qint64 lagMs() const;
+    void applyMetadata(const QVariantMap &track, qint64 lagMs);
     void fillContext(const QVariantMap &data);
     void fillResults(const QVariantMap &data);
     void fillQueue(const QVariantMap &data);
@@ -223,6 +229,11 @@ private:
     bool m_background;
     bool m_bgClosed;     // the connection was closed on purpose in the background
     bool m_resumeOnOpen; // play pressed (lock screen, headset) while it was closed
+    // The next track's metadata, which arrives as soon as the gateway reaches
+    // it (up to 30 s before we play it): shown when the audio gets there.
+    QVariantMap m_pendingTrack;
+    bool m_hasPending;
+    QTimer m_pendingTimer;
 
     bb::cascades::ArrayDataModel *m_playlists, *m_tracks, *m_results, *m_queue;
     bool m_queueLoading, m_queueVisible;

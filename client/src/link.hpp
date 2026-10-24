@@ -34,9 +34,15 @@ public slots:
     void connectTo(const QUrl &url, const QByteArray &token);
     void disconnectNow();
     void sendText(const QByteArray &utf8);
+    // Playing: tell the gateway every second how far we have played, so it
+    // keeps our margin full; paused: once, then quiet (no wake-ups).
+    void setPlaying(bool playing);
+    void sendAck();
 
 signals:
     void opened();
+    // A seek or a jump: the ring was emptied.
+    void discontinuity();
     // authFailed: the token was refused; lockedOut: too many wrong tokens.
     void closed(const QString &reason, bool authFailed, bool lockedOut);
     void textReceived(const QByteArray &utf8);
@@ -54,6 +60,8 @@ private:
     AudioRing *m_ring;
     WebSocketClient *m_ws;
     QTimer *m_retry;
+    QTimer *m_ack;
+    bool m_playing;
     QUrl m_url;
     QByteArray m_token;
     OpusDecoder *m_decoder;

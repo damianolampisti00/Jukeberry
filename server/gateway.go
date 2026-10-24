@@ -93,7 +93,7 @@ func (g *gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 	c := &client{
 		ip:    ip,
 		ctrl:  make(chan outMsg, 256),
-		audio: make(chan []byte, 50), // 1 s
+		audio: make(chan []byte, lead+500), // 40 s: the margin of a phone that acks, and a stall's worth
 		done:  make(chan struct{}),
 		busy:  make(chan struct{}, 8),
 	}
@@ -106,7 +106,7 @@ func (g *gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		cancel()
 		c.close()
-		g.audio.subscribe(c, false)
+		g.audio.subscribe(c, false) // also forgets its acks
 		g.mu.Lock()
 		delete(g.clients, c)
 		g.mu.Unlock()
@@ -150,6 +150,12 @@ func (g *gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		var cmd command
 		if err := json.Unmarshal(msg, &cmd); err != nil {
 			c.sendJSON(reply{OK: false, Error: "bad JSON"})
+			continue
+		}
+		if cmd.Cmd == "audio_ack" { // {seq}: every second while listening; no reply
+			if cmd.Seq != nil {
+				g.audio.ack(c, *cmd.Seq)
+			}
 			continue
 		}
 		select {
@@ -207,8 +213,20 @@ func msgType(m outMsg) websocket.MessageType {
 
 // onPlayerEvent relays go-librespot's events to every phone.
 func (g *gateway) onPlayerEvent(ev playerEvent) {
-	if ev.Type == "seek" {
+	var pos struct {
+		Position int64 `json:"position"`
+		Duration int64 `json:"duration"`
+	}
+	switch ev.Type {
+	case "seek":
 		g.audio.flush.Store(true)
+		if json.Unmarshal(ev.Data, &pos) == nil {
+			g.audio.sought(pos.Position)
+		}
+	case "metadata": // a new track: natural (at the old one's end) or a jump
+		if json.Unmarshal(ev.Data, &pos) == nil {
+			g.audio.trackStarted(pos.Position, pos.Duration)
+		}
 	}
 	switch ev.Type {
 	case "paused", "playing", "stopped", "not_playing", "inactive", "active":
@@ -249,6 +267,7 @@ type command struct {
 	Q         string   `json:"q"`
 	Types     string   `json:"types"`
 	URL       string   `json:"url"`
+	Seq       *uint32  `json:"seq"`
 }
 
 type reply struct {

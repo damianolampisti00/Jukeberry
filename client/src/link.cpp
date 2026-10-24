@@ -13,10 +13,13 @@ const int kMaxFrame = 5760;          // 120 ms at 48 kHz: Opus' longest frame
 const int kRetryMs = 3000;
 const int kLockedOutRetryMs = 5 * 60 * 1000;
 const int kMaxConcealFrames = 5;     // fill at most 100 ms of a gap with Opus' concealment
+const int kAckMs = 1000;
+const int kFrameBytes = 960 * 4;     // one 20 ms frame, decoded
+const int kDeviceFrames = 3;         // still in the device's own queue
 }
 
 Link::Link(AudioRing *ring, QObject *parent) :
-        QObject(parent), m_ring(ring), m_ws(0), m_retry(0), m_decoder(0),
+        QObject(parent), m_ring(ring), m_ws(0), m_retry(0), m_ack(0), m_playing(false), m_decoder(0),
         m_pcm(kMaxFrame * 4, 0), m_lastSeq(-1), m_wanted(false)
 {
 }
@@ -38,6 +41,9 @@ void Link::connectTo(const QUrl &url, const QByteArray &token)
         m_retry = new QTimer(this);
         m_retry->setSingleShot(true);
         connect(m_retry, SIGNAL(timeout()), this, SLOT(reconnect()));
+        m_ack = new QTimer(this);
+        m_ack->setInterval(kAckMs);
+        connect(m_ack, SIGNAL(timeout()), this, SLOT(sendAck()));
         int err = 0;
         m_decoder = opus_decoder_create(48000, 2, &err);
         if (!m_decoder) qWarning() << "[Jukeberry:link] opus_decoder_create failed:" << err;
@@ -70,14 +76,37 @@ void Link::sendText(const QByteArray &utf8)
     if (m_ws && m_ws->isOpen()) m_ws->sendText(utf8);
 }
 
+void Link::setPlaying(bool playing)
+{
+    m_playing = playing;
+    sendAck(); // a resume: before the gateway reads on, so it keeps our margin
+    if (!m_ack) return;
+    if (playing && m_ws && m_ws->isOpen()) m_ack->start();
+    else m_ack->stop();
+}
+
+// audio_ack {seq}: the last frame played = the newest one received minus
+// what still waits in the ring and the device.
+void Link::sendAck()
+{
+    if (m_lastSeq < 0 || !m_ws || !m_ws->isOpen()) return;
+    const qint64 played = m_lastSeq - m_ring->level() / kFrameBytes - kDeviceFrames;
+    sendText(QString("{\"cmd\":\"audio_ack\",\"seq\":%1}").arg(qMax(played, qint64(0))).toUtf8());
+}
+
 void Link::onOpened()
 {
-    m_lastSeq = -1;
+    // m_lastSeq stays: the gateway numbers its frames across connections, so
+    // the first ack (sent with "audio on") lets it keep our margin instead of
+    // starting over (a resume after the connection was closed in the
+    // background would otherwise drop up to 30 s of queued music).
+    if (m_playing) m_ack->start();
     emit opened();
 }
 
 void Link::onClosed(const QString &reason)
 {
+    if (m_ack) m_ack->stop();
     // WebSocketClient reports a refused upgrade as "upgrade refused: HTTP/1.1 401 ...".
     const bool auth = reason.contains(" 401 ");
     const bool locked = reason.contains(" 429 ");
@@ -103,6 +132,7 @@ void Link::onBinary(const QByteArray &data)
         // A seek, a new track or a restart: what is still queued is stale.
         m_ring->clear();
         discontinuities.ref();
+        emit discontinuity();
     } else if (m_lastSeq >= 0 && qint64(word) > m_lastSeq + 1) {
         // Frames the gateway dropped for a slow connection.
         const int lost = int(qint64(word) - m_lastSeq - 1);

@@ -26,7 +26,11 @@ using bb::multimedia::NowPlayingConnection;
 
 namespace {
 
-const int kRingBytes = AudioOutput::kBytesPerMs * 2000; // up to 2 s queued
+// The gateway sends up to 30 s ahead of what we have played (our acks), so
+// a weak signal does not interrupt the music: ~6.7 MB of decoded audio.
+const int kRingBytes = AudioOutput::kBytesPerMs * 35000;
+// A track change further ahead than this is shown when the audio gets there.
+const int kShowTrackLaterMs = 1500;
 const int kDeviceLatencyMs = 60;                        // the device's own queue (frags_max 4 x 20 ms, part full)
 const int kContextPollMs = 1000;
 const int kMaxContextPolls = 30;
@@ -67,7 +71,8 @@ Player::Player(QObject *parent) :
         m_np(0),
         m_background(false),
         m_bgClosed(false),
-        m_resumeOnOpen(false)
+        m_resumeOnOpen(false),
+        m_hasPending(false)
 {
     qRegisterMetaType<QUrl>("QUrl");
 
@@ -105,6 +110,10 @@ Player::Player(QObject *parent) :
     connect(m_link, SIGNAL(closed(QString, bool, bool)), this, SLOT(onClosed(QString, bool, bool)));
     connect(m_link, SIGNAL(textReceived(QByteArray)), this, SLOT(onText(QByteArray)));
     connect(m_link, SIGNAL(imageReceived(quint32, QByteArray)), this, SLOT(onImage(quint32, QByteArray)));
+    connect(this, SIGNAL(linkPlaying(bool)), m_link, SLOT(setPlaying(bool)));
+    connect(m_link, SIGNAL(discontinuity()), this, SLOT(onDiscontinuity()));
+    m_pendingTimer.setSingleShot(true);
+    connect(&m_pendingTimer, SIGNAL(timeout()), this, SLOT(applyPendingTrack()));
     m_linkThread.start();
     m_audio = new AudioOutput(&m_ring);
     m_audio->start(QThread::TimeCriticalPriority);
@@ -171,10 +180,11 @@ void Player::onOpened()
     QVariantMap audio;
     audio["on"] = true;
     send("audio", audio);
+    emit linkPlaying(m_playing); // an ack at once: the gateway keeps our queued audio
     if (m_resumeOnOpen) { // play was pressed while the connection was closed
         m_resumeOnOpen = false;
+        setPlaying(true); // (its ack goes before the resume)
         send("resume");
-        setPlaying(true);
     }
     if (m_playlists->isEmpty()) loadPlaylists();
 }
@@ -325,14 +335,29 @@ void Player::onText(const QByteArray &utf8)
 void Player::onEvent(const QString &type, const QVariantMap &data)
 {
     if (type == "metadata") {
-        applyTrack(data);
-        setPositionBase(data.value("position").toLongLong());
-        if (m_queueVisible) loadQueue(); // the queue moved on
+        // The gateway reads a natural track change as soon as its margin
+        // reaches it: show it when our audio gets there. (A jump empties
+        // our queue first or soon after: onDiscontinuity shows it at once.)
+        const qint64 lag = lagMs();
+        if (lag > kShowTrackLaterMs && !m_trackUri.isEmpty()
+                && data.value("uri").toString() != m_trackUri) {
+            m_pendingTrack = data;
+            m_hasPending = true;
+            m_pendingTimer.start(int(lag));
+        } else {
+            applyMetadata(data, lag);
+        }
     } else if (type == "playing") {
         setPlaying(true);
-    } else if (type == "paused" || type == "stopped") {
+    } else if (type == "paused") {
         setPlaying(false);
+    } else if (type == "stopped") {
+        // The end of the queue, which the gateway reaches up to 30 s before
+        // we do: let the queued end of the last track play out.
+        setPlaying(false);
+        if (m_audio) m_audio->setHold(false);
     } else if (type == "seek") {
+        // a seek empties our queue: what plays next is this position
         setPositionBase(data.value("position").toLongLong());
     } else if (type == "shuffle_context") {
         m_shuffle = data.value("value").toBool();
@@ -358,8 +383,10 @@ void Player::applyStatus(const QVariantMap &s)
     m_contextName = s.value("context_name").toString();
     const QVariantMap track = s.value("track").toMap();
     if (!track.isEmpty()) {
+        m_hasPending = false;
+        m_pendingTimer.stop();
         applyTrack(track);
-        setPositionBase(track.value("position").toLongLong());
+        setPositionBase(track.value("position").toLongLong() - lagMs());
     }
     setPlaying(!s.value("paused").toBool() && !s.value("stopped").toBool() && !track.isEmpty());
 }
@@ -389,17 +416,43 @@ void Player::applyTrack(const QVariantMap &t)
 
 // --- playback position -----------------------------------------------------
 
+// m_posBase is what was audible when m_posClock restarted: go-librespot
+// reports what it has handed out, so the bases are set minus our queue
+// (lagMs) at that moment. (Subtracting the queue at every display, as before,
+// went wrong once the gateway sends in bursts to keep a 30 s margin.)
 int Player::position() const
 {
     qint64 ms = m_posBase;
-    if (m_playing && m_posClock.isValid()) {
-        // go-librespot counts what it has handed out; what is audible is
-        // that minus what still waits in our ring and the device.
-        ms += m_posClock.elapsed() - m_ring.level() / AudioOutput::kBytesPerMs - kDeviceLatencyMs;
-    }
+    if (m_playing && m_posClock.isValid()) ms += m_posClock.elapsed();
     if (ms < 0) ms = 0;
     if (m_duration > 0 && ms > m_duration) ms = m_duration;
     return int(ms);
+}
+
+qint64 Player::lagMs() const
+{
+    return m_ring.level() / AudioOutput::kBytesPerMs + kDeviceLatencyMs;
+}
+
+void Player::applyMetadata(const QVariantMap &track, qint64 lag)
+{
+    m_hasPending = false;
+    m_pendingTimer.stop();
+    applyTrack(track);
+    setPositionBase(track.value("position").toLongLong() - lag);
+    if (m_queueVisible) loadQueue(); // the queue moved on
+}
+
+// the audio reached the track change the gateway announced earlier
+void Player::applyPendingTrack()
+{
+    if (m_hasPending) applyMetadata(m_pendingTrack, 0);
+}
+
+// a seek or a jump emptied our queue: an announced track plays now
+void Player::onDiscontinuity()
+{
+    if (m_hasPending) applyMetadata(m_pendingTrack, lagMs());
 }
 
 void Player::setPositionBase(qint64 ms)
@@ -411,7 +464,11 @@ void Player::setPositionBase(qint64 ms)
 
 void Player::setPlaying(bool playing)
 {
+    // Paused: our audio stops at once and keeps its queue (up to 30 s) for
+    // the resume; the link acks only while playing.
+    if (m_audio) m_audio->setHold(!playing);
     if (playing == m_playing) return;
+    emit linkPlaying(playing);
     if (playing) {
         m_posClock.restart();
     } else if (m_posClock.isValid()) {
@@ -474,8 +531,9 @@ QString Player::formatTime(int ms) const
 void Player::playPause()
 {
     if (!hasTrack()) return;
-    send(m_playing ? "pause" : "resume");
-    setPlaying(!m_playing); // at once; the event confirms it
+    const bool resume = !m_playing;
+    setPlaying(resume); // at once (and a resume's ack goes first); the event confirms it
+    send(resume ? "resume" : "pause");
 }
 
 void Player::next() { send("next"); }
