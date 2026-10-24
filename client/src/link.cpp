@@ -94,6 +94,15 @@ void Link::sendAck()
     sendText(QString("{\"cmd\":\"audio_ack\",\"seq\":%1}").arg(qMax(played, qint64(0))).toUtf8());
 }
 
+void Link::skipTo(quint32 seq)
+{
+    if (m_lastSeq < 0 || qint64(seq) > m_lastSeq) return;
+    const int keep = int(m_lastSeq - qint64(seq) + 1) * kFrameBytes;
+    const int drop = m_ring->level() - keep;
+    if (drop > 0) m_ring->skip(drop);
+    sendAck();
+}
+
 void Link::onOpened()
 {
     // m_lastSeq stays: the gateway numbers its frames across connections, so

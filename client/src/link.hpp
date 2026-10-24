@@ -38,6 +38,9 @@ public slots:
     // keeps our margin full; paused: once, then quiet (no wake-ups).
     void setPlaying(bool playing);
     void sendAck();
+    // "next" within the margin: drop what is queued before frame seq (the
+    // next track's start, already here).
+    void skipTo(quint32 seq);
 
 signals:
     void opened();

@@ -149,6 +149,7 @@ signals:
     void linkSend(const QByteArray &utf8);
     void linkDisconnect();
     void linkPlaying(bool playing);
+    void linkSkipTo(quint32 seq);
 
 private slots:
     void onDiscontinuity();

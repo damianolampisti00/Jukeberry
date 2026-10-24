@@ -111,6 +111,7 @@ Player::Player(QObject *parent) :
     connect(m_link, SIGNAL(textReceived(QByteArray)), this, SLOT(onText(QByteArray)));
     connect(m_link, SIGNAL(imageReceived(quint32, QByteArray)), this, SLOT(onImage(quint32, QByteArray)));
     connect(this, SIGNAL(linkPlaying(bool)), m_link, SLOT(setPlaying(bool)));
+    connect(this, SIGNAL(linkSkipTo(quint32)), m_link, SLOT(skipTo(quint32)));
     connect(m_link, SIGNAL(discontinuity()), this, SLOT(onDiscontinuity()));
     m_pendingTimer.setSingleShot(true);
     connect(&m_pendingTimer, SIGNAL(timeout()), this, SLOT(applyPendingTrack()));
@@ -356,6 +357,11 @@ void Player::onEvent(const QString &type, const QVariantMap &data)
         // we do: let the queued end of the last track play out.
         setPlaying(false);
         if (m_audio) m_audio->setHold(false);
+    } else if (type == "skip_to") {
+        // "next" while the gateway already had the next track's start: jump
+        // to it in our queue (no new track from Spotify)
+        emit linkSkipTo(data.value("seq").toUInt());
+        applyPendingTrack();
     } else if (type == "seek") {
         // a seek empties our queue: what plays next is this position
         setPositionBase(data.value("position").toLongLong());

@@ -71,6 +71,32 @@ type audioHub struct {
 	trackDurMs int64
 	holding    bool // read no further until the phones are `near` holdAt
 	holdAt     uint32
+
+	// go-librespot runs its commands on the loop that writes the FIFO: while
+	// we do not read (margin full, a hold, a paused phone that stopped
+	// acking) a command waited until we read again (a pause took 27 s). While
+	// a command is in flight the reading goes on.
+	commands atomic.Int32
+}
+
+// command: around every go-librespot call (see commands).
+func (h *audioHub) command() func() {
+	h.commands.Add(1)
+	return func() { h.commands.Add(-1) }
+}
+
+// held: the frame where a natural track change was read while the phones
+// still play the track before it (go-librespot is already in the next one).
+func (h *audioHub) held() (uint32, bool) {
+	h.trackMu.Lock()
+	defer h.trackMu.Unlock()
+	return h.holdAt, h.holding
+}
+
+func (h *audioHub) release() {
+	h.trackMu.Lock()
+	h.holding = false
+	h.trackMu.Unlock()
 }
 
 func newAudioHub() *audioHub {
@@ -143,6 +169,9 @@ func (h *audioHub) sought(posMs int64) {
 // none does, so the caller paces by the clock.
 func (h *audioHub) paced() bool {
 	for {
+		if h.commands.Load() > 0 {
+			return true
+		}
 		played, ok := h.played()
 		if !ok {
 			return false

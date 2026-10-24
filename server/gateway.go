@@ -234,10 +234,20 @@ func (g *gateway) onPlayerEvent(ev playerEvent) {
 		// with it; a pause without one came from Spotify (another device).
 		log.Printf("librespot: %s %s", ev.Type, ev.Data)
 	}
+	var data any // omitted, as before, when the event has none
+	if len(ev.Data) > 0 {
+		data = ev.Data
+	}
+	g.broadcastEvent(ev.Type, data)
+}
+
+// broadcastEvent: {"event", "data"} to every phone (go-librespot's events,
+// and the gateway's own: skip_to {seq}).
+func (g *gateway) broadcastEvent(event string, data any) {
 	b, err := json.Marshal(struct {
-		Event string          `json:"event"`
-		Data  json.RawMessage `json:"data,omitempty"`
-	}{ev.Type, ev.Data})
+		Event string `json:"event"`
+		Data  any    `json:"data,omitempty"`
+	}{event, data})
 	if err != nil {
 		return
 	}
@@ -303,6 +313,7 @@ func (g *gateway) run(ctx context.Context, c *client, cmd *command) (json.RawMes
 	}
 	// call: one go-librespot request; flush marks the audio after a jump.
 	call := func(method, path string, body any, flush bool) (json.RawMessage, error) {
+		defer g.audio.command()() // go-librespot needs us reading to run it
 		status, data, err := g.ls.call(ctx, method, path, body)
 		if err != nil {
 			return nil, err
@@ -356,11 +367,26 @@ func (g *gateway) run(ctx context.Context, c *client, cmd *command) (json.RawMes
 				return nil, err
 			}
 			body = map[string]string{"uri": cmd.URI}
+		} else if at, held := g.audio.held(); held {
+			// go-librespot already plays the next track (our margin reached
+			// it) while the phones still play the one before: its "next"
+			// would skip one. The phones jump to the queued start instead.
+			g.audio.release()
+			g.broadcastEvent("skip_to", map[string]uint32{"seq": at})
+			log.Printf("ws %s: next within the margin (skip_to %d)", c.ip, at)
+			return nil, nil
 		}
 		return call("POST", "/player/next", body, true)
 	case "seek": // {position, relative?}
 		if cmd.Position == nil {
 			return nil, errors.New("position is required")
+		}
+		if _, held := g.audio.held(); held && !cmd.Relative {
+			// The phones still play the track before the one go-librespot
+			// reads: back to it first, then the seek is in it.
+			if _, err := call("POST", "/player/prev", nil, true); err != nil {
+				return nil, err
+			}
 		}
 		return call("POST", "/player/seek", map[string]any{"position": *cmd.Position, "relative": cmd.Relative}, true)
 	case "volume": // {volume, relative?}; without volume: read it
